@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import re
 import secrets
+import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable
+from typing import Any, Callable, TextIO
 
 from .io import atomic_write_json, load_json
 
@@ -25,14 +27,14 @@ def _load_overlay(path: Path) -> ModuleType:
     return module
 
 
-def _safe_logger() -> Callable[..., None]:
+def _safe_logger(stream: TextIO) -> Callable[..., None]:
     def emit(*, stage: str, status: str, count: int | None = None) -> None:
         if stage not in _SAFE_STAGES or status not in _SAFE_STATUSES:
             raise ValueError("provider emitted an invalid log event")
         fields = [f"stage={stage}", f"status={status}"]
         if count is not None:
             fields.append(f"count={int(count)}")
-        print(" ".join(fields), flush=True)
+        print(" ".join(fields), file=stream, flush=True)
 
     return emit
 
@@ -74,27 +76,33 @@ def run_pipeline(
     if not isinstance(config, dict) or not isinstance(state, dict):
         raise RuntimeError("runtime payload is invalid")
     token_env = config.get("token_env")
-    if not isinstance(token_env, str) or not _ENV_NAME.fullmatch(token_env):
-        raise RuntimeError("runtime token binding is invalid")
-    token = os.environ.get(token_env, "")
-    if not token:
-        raise RuntimeError("runtime credential is unavailable")
+    token: str | None = None
+    if token_env is not None:
+        if not isinstance(token_env, str) or not _ENV_NAME.fullmatch(token_env):
+            raise RuntimeError("runtime token binding is invalid")
+        token = os.environ.get(token_env, "")
+        if not token:
+            raise RuntimeError("runtime credential is unavailable")
+        os.environ.pop(token_env, None)
 
     batch_dir = work_dir / "batch"
-    overlay = _load_overlay(provider_path)
-    collect = getattr(overlay, "collect", None)
-    if not callable(collect):
-        raise RuntimeError("provider overlay has no collector")
-    result = _validate_result(
-        collect(
-            config=config,
-            state=state,
-            token=token,
-            output=batch_dir,
-            emit=_safe_logger(),
-        ),
-        batch_dir,
-    )
+    private_output_path = work_dir / "provider-output.log"
+    with private_output_path.open("w", encoding="utf-8") as private_output:
+        os.chmod(private_output_path, 0o600)
+        safe_logger = _safe_logger(sys.stdout)
+        with contextlib.redirect_stdout(private_output), contextlib.redirect_stderr(private_output):
+            overlay = _load_overlay(provider_path)
+            collect = getattr(overlay, "collect", None)
+            if not callable(collect):
+                raise RuntimeError("provider overlay has no collector")
+            provider_result = collect(
+                config=config,
+                state=state,
+                token=token,
+                output=batch_dir,
+                emit=safe_logger,
+            )
+    result = _validate_result(provider_result, batch_dir)
     atomic_write_json(state_out, result["state"])
     public_result = {
         "new_count": result["new_count"],

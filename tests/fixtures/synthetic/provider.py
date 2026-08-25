@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def collect(*, config, state, token, output: Path, emit):
-    assert token == "synthetic-token"
+    assert token == config.get("provider", {}).get("expected_token")
     emit(stage="discover", status="ok", count=1)
     known = set(state.get("known", []))
     item_id = "source-alpha-item-1"

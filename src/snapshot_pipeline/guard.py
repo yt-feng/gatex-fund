@@ -10,33 +10,33 @@ from .io import load_json
 _CJK = re.compile(r"[\u3400-\u9fff]")
 _ABSOLUTE_LOCAL = re.compile(r"/(?:Users|home)/[^/\s]+/")
 _CREDENTIAL = re.compile(
-    r"(?i)(?:authorization\s*[:=]|bearer\s+[a-z0-9_./+\-=]{20,}|api[_-]?key\s*[:=])"
+    r"(?i)(?:authorization\s*[:=]|bearer\s+[a-z0-9_./+\-=]{20,}|api[_-]?key\s*[:=]|"
+    r"age-secret-key-(?:1|pq-1)[a-z0-9]+|-----begin [^-]*private key-----|"
+    r"ss://[a-z0-9_+\-/=]{24,}(?:@[a-z0-9.-]+:\d{1,5})?)"
 )
-_TEXT_SUFFIXES = {
-    ".css",
-    ".html",
-    ".js",
-    ".json",
-    ".md",
-    ".py",
-    ".sh",
-    ".toml",
-    ".txt",
-    ".yaml",
-    ".yml",
-}
+_IGNORED_ROOTS = {".git", ".local", ".venv", "work"}
 
 
-def _public_files(root: Path) -> Iterable[Path]:
+def _public_files(root: Path) -> Iterable[tuple[Path, Path]]:
     for path in root.rglob("*"):
-        if not path.is_file() or path.is_symlink():
-            continue
         relative = path.relative_to(root)
-        if ".git" in relative.parts or "__pycache__" in relative.parts:
+        if relative.parts[0] in _IGNORED_ROOTS or "__pycache__" in relative.parts:
             continue
-        if path.suffix == ".age" or path.suffix not in _TEXT_SUFFIXES:
+        if path.is_symlink():
+            yield path, relative
             continue
-        yield path
+        if not path.is_file():
+            continue
+        yield path, relative
+
+
+def _has_public_violation(text: str, markers: list[str]) -> bool:
+    return bool(
+        _CJK.search(text)
+        or _ABSOLUTE_LOCAL.search(text)
+        or _CREDENTIAL.search(text)
+        or any(marker.casefold() in text.casefold() for marker in markers)
+    )
 
 
 def guard_public_tree(root: Path, config_path: Path | None = None) -> int:
@@ -49,16 +49,28 @@ def guard_public_tree(root: Path, config_path: Path | None = None) -> int:
         markers = [item for item in raw_markers if item]
 
     hits = 0
-    for path in _public_files(root.resolve()):
+    for path, relative in _public_files(root.resolve()):
+        if path.is_symlink():
+            hits += 1
+            continue
+        if _has_public_violation(relative.as_posix(), markers):
+            hits += 1
+            continue
+        if path.suffix == ".age":
+            try:
+                with path.open("rb") as handle:
+                    header = handle.read(len(b"age-encryption.org/v1\n"))
+                if header != b"age-encryption.org/v1\n":
+                    hits += 1
+            except OSError:
+                hits += 1
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             hits += 1
             continue
-        if _CJK.search(text) or _ABSOLUTE_LOCAL.search(text) or _CREDENTIAL.search(text):
-            hits += 1
-            continue
-        if any(marker.casefold() in text.casefold() for marker in markers):
+        if _has_public_violation(text, markers):
             hits += 1
     if hits:
         print(f"stage=guard status=failed count={hits}")

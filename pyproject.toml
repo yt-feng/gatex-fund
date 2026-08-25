@@ -9,7 +9,11 @@ description = "A provider-neutral sealed snapshot runner"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-dependencies = []
+dependencies = [
+  "beautifulsoup4==4.14.3",
+  "PySocks==1.7.1",
+  "requests==2.32.5",
+]
 
 [project.scripts]
 snapshot-pipeline = "snapshot_pipeline.cli:main"
