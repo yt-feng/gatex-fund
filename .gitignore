@@ -1,0 +1,10 @@
+.DS_Store
+.local/
+.venv/
+__pycache__/
+*.py[cod]
+*.key
+*.identity
+*.plaintext
+work/
+

@@ -1,0 +1,35 @@
+name: scheduled-snapshot
+
+# This file is deliberately outside .github/workflows. Moving it into that
+# directory is an explicit activation step after an adapter has been reviewed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduled-snapshot-main
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: ${{ vars.ENABLE_SNAPSHOT == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Run sealed snapshot
+        env:
+          PYTHONPATH: src
+          RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
+          SOURCE_API_TOKEN: ${{ secrets.SOURCE_API_TOKEN }}
+        run: bash scripts/run_scheduled.sh
+

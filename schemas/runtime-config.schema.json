@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Runtime configuration",
+  "type": "object",
+  "required": ["token_env", "private_markers", "provider"],
+  "properties": {
+    "token_env": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+    },
+    "private_markers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "provider": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}
+
