@@ -67,4 +67,3 @@ git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.gith
 git -C "$repo_root" commit -m "snapshot: update sealed ledger"
 git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"
 echo "stage=state status=ok count=$new_count"
-

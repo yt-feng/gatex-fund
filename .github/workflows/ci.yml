@@ -25,4 +25,3 @@ jobs:
         env:
           PYTHONPATH: src
         run: python3 -m snapshot_pipeline.cli guard --root .
-

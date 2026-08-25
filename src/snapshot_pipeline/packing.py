@@ -43,4 +43,3 @@ def deterministic_tar(source: Path, output: Path) -> str:
     atomic_write_bytes(output, payload)
     os.chmod(output, 0o600)
     return hashlib.sha256(payload).hexdigest()
-

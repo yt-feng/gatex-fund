@@ -30,4 +30,3 @@ def atomic_write_bytes(path: Path, payload: bytes) -> None:
 def atomic_write_json(path: Path, value: Any) -> None:
     payload = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     atomic_write_bytes(path, payload)
-

@@ -65,4 +65,3 @@ def guard_public_tree(root: Path, config_path: Path | None = None) -> int:
         return 1
     print("stage=guard status=ok count=0")
     return 0
-

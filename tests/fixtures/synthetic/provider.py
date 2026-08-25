@@ -23,4 +23,3 @@ def collect(*, config, state, token, output: Path, emit):
         "new_count": 1,
         "discovered_count": 1,
     }
-

@@ -120,4 +120,3 @@ def private_failure(work_dir: Path, error: BaseException) -> str:
     except Exception:
         pass
     return error_id
-

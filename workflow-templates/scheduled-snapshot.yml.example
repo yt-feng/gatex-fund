@@ -32,4 +32,3 @@ jobs:
           RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
           SOURCE_API_TOKEN: ${{ secrets.SOURCE_API_TOKEN }}
         run: bash scripts/run_scheduled.sh
-

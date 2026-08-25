@@ -12,4 +12,3 @@ Rotate a runtime identity by decrypting all runtime payloads locally,
 re-encrypting them to a new recipient, and replacing the corresponding
 repository secret. Export identities are intentionally offline and are never
 available to the workflow.
-
