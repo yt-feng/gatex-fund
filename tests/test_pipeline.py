@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from snapshot_pipeline.cli import _public_failure_class
-from snapshot_pipeline.engine import run_pipeline
+from snapshot_pipeline.engine import _load_overlay, run_pipeline
 from snapshot_pipeline.guard import guard_public_tree
 from snapshot_pipeline.packing import deterministic_tar
 
@@ -18,6 +18,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PipelineTests(unittest.TestCase):
+    def test_overlay_loader_supports_dataclasses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            provider = Path(temporary) / "provider.py"
+            provider.write_text(
+                """\
+from __future__ import annotations
+from dataclasses import dataclass
+@dataclass(frozen=True)
+class Record:
+    value: str
+def collect(**kwargs):
+    return {'state': {}, 'new_count': 0, 'discovered_count': 0}
+""",
+                encoding="utf-8",
+            )
+            module = _load_overlay(provider)
+            self.assertEqual(module.Record("ready").value, "ready")
+
     def test_public_failure_class_is_allowlisted(self):
         class SyntheticNetworkError(RuntimeError):
             status = "network"
