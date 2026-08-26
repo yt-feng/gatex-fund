@@ -6,6 +6,23 @@ umask 077
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 runner_base="${RUNNER_TEMP:-/tmp}"
 work_dir="$(mktemp -d "$runner_base/snapshot-pipeline.XXXXXX")"
+diagnostic_path="$runner_base/snapshot-diagnostic.tar.age"
+age_bin=""
+
+seal_failure_diagnostic() {
+  local exit_status=$?
+  trap - ERR
+  if [[ -x "$age_bin" && -d "$work_dir/run" ]]; then
+    local diagnostic_tar="$work_dir/diagnostic.tar"
+    if tar -C "$work_dir" -cf "$diagnostic_tar" run 2>/dev/null; then
+      "$age_bin" \
+        -R "$repo_root/recipients/runtime-recipient.txt" \
+        -o "$diagnostic_path" \
+        "$diagnostic_tar" 2>/dev/null || true
+    fi
+  fi
+  return "$exit_status"
+}
 
 cleanup() {
   if [[ -s "$work_dir/egress.pid" ]]; then
@@ -26,6 +43,7 @@ cleanup() {
   fi
   rm -rf -- "$work_dir"
 }
+trap seal_failure_diagnostic ERR
 trap cleanup EXIT
 
 : "${RUNTIME_AGE_IDENTITY:?runtime identity is required}"

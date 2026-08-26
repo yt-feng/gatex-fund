@@ -38,3 +38,11 @@ jobs:
           RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
           EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
         run: bash scripts/run_scheduled.sh
+      - name: Upload sealed diagnostic
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sealed-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/snapshot-diagnostic.tar.age
+          if-no-files-found: warn
+          retention-days: 1
