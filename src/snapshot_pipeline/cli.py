@@ -9,6 +9,23 @@ from .guard import guard_public_tree
 from .packing import deterministic_tar
 
 
+_PUBLIC_FAILURE_CLASSES = {
+    "captcha",
+    "config",
+    "discover-empty",
+    "failed",
+    "incomplete",
+    "locked",
+    "network",
+    "parse",
+}
+
+
+def _public_failure_class(error: BaseException) -> str:
+    value = getattr(error, "status", "failed")
+    return value if isinstance(value, str) and value in _PUBLIC_FAILURE_CLASSES else "failed"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="snapshot-pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -55,7 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     except BaseException as error:
         work = getattr(args, "work", Path.cwd())
         error_id = private_failure(work, error)
-        print(f"stage=run status=failed error_id={error_id}", file=sys.stderr)
+        failure_class = _public_failure_class(error)
+        print(
+            f"stage=run status=failed failure_class={failure_class} error_id={error_id}",
+            file=sys.stderr,
+        )
         return 1
     return 2
 
