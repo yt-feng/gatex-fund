@@ -1,0 +1,40 @@
+name: scheduled-snapshot
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduled-snapshot-main
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: ${{ vars.ENABLE_SNAPSHOT == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install egress client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shadowsocks-libev
+      - name: Install runtime
+        run: python3 -m pip install --disable-pip-version-check .
+      - name: Run sealed snapshot
+        env:
+          PYTHONPATH: src
+          RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
+          EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
+        run: bash scripts/run_scheduled.sh
