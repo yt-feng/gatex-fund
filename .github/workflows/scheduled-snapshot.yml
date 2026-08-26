@@ -31,13 +31,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends shadowsocks-libev
       - name: Install runtime
-        run: python3 -m pip install --disable-pip-version-check .
+        run: |
+          python3 -m pip install --disable-pip-version-check .
+          python3 -m playwright install --with-deps chromium
       - name: Run sealed snapshot
         env:
           PYTHONPATH: src
           RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
           EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
-        run: bash scripts/run_scheduled.sh
+        run: xvfb-run -a bash scripts/run_scheduled.sh
       - name: Upload sealed diagnostic
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
