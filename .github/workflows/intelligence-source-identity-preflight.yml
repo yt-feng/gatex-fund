@@ -1,0 +1,42 @@
+name: intelligence-source-identity-preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Sealed candidate source profile
+        required: true
+        default: source-b
+        type: choice
+        options:
+          - source-a
+          - source-b
+
+permissions:
+  contents: read
+
+concurrency:
+  group: intelligence-source-identity-preflight
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install runtime
+        run: python3 -m pip install --disable-pip-version-check .
+      - name: Verify sealed candidate identity only
+        env:
+          PYTHONPATH: src
+          RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
+          TIKHUB_WECHAT_TOKEN: ${{ secrets.TIKHUB_WECHAT_TOKEN }}
+          TIKHUB_API_BASE: https://api.tikhub.io
+          INTELLIGENCE_SOURCE_PROFILE: ${{ inputs.profile }}
+        run: bash scripts/run_intelligence_profile_preflight.sh

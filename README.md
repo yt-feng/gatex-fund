@@ -24,6 +24,11 @@ workflow. Its daily schedule is gated by the `ENABLE_SNAPSHOT` repository
 variable and remains disabled when that variable is absent. A separate CI
 workflow performs synthetic offline tests on every source change.
 
+The optional GateX Intelligence source adapters are documented in
+[`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).
+They use separate sealed profiles and cursors from the existing snapshot
+workflow, and their intake path does not persist a new full-source bundle.
+
 Source changes are authored and validated locally before they are pushed. The
 scheduled workflow may commit only encrypted checkpoints and encrypted export
 bundles; it does not rewrite the local source tree or publish plaintext data.

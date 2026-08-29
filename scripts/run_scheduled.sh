@@ -8,13 +8,45 @@ runner_base="${RUNNER_TEMP:-/tmp}"
 work_dir="$(mktemp -d "$runner_base/snapshot-pipeline.XXXXXX")"
 diagnostic_path="$runner_base/snapshot-diagnostic.tar.age"
 age_bin=""
+profile_root_value="${SNAPSHOT_PROFILE_ROOT:-sealed}"
+vault_relative="${SNAPSHOT_VAULT_DIR:-vault}"
+intake_mode="${SNAPSHOT_INTAKE_MODE:-off}"
+intake_secret="${GATEX_INTELLIGENCE_INTAKE_SECRET-}"
+unset GATEX_INTELLIGENCE_INTAKE_SECRET
+
+if [[ "$profile_root_value" = /* ]]; then
+  profile_root="$profile_root_value"
+else
+  profile_root="$repo_root/$profile_root_value"
+fi
+case "$profile_root" in
+  "$repo_root"/sealed|"$repo_root"/sealed/*) ;;
+  *) echo "stage=run status=failed reason=profile-root-invalid" >&2; exit 1 ;;
+esac
+if [[ ! "$vault_relative" =~ ^[A-Za-z0-9._/-]+$ || "$vault_relative" == /* || "$vault_relative" == *".."* ]]; then
+  echo "stage=run status=failed reason=vault-root-invalid" >&2
+  exit 1
+fi
+if [[ "$intake_mode" != "off" && "$intake_mode" != "dry-run" && "$intake_mode" != "post" ]]; then
+  echo "stage=run status=failed reason=intake-mode-invalid" >&2
+  exit 1
+fi
+checkpoint_relative="${profile_root#"$repo_root/"}/checkpoint.json.age"
+vault_root="$repo_root/$vault_relative"
 
 seal_failure_diagnostic() {
   local exit_status=$?
   trap - ERR
-  if [[ -x "$age_bin" && -d "$work_dir/run" ]]; then
+  if [[ -x "$age_bin" ]]; then
     local diagnostic_tar="$work_dir/diagnostic.tar"
-    if tar -C "$work_dir" -cf "$diagnostic_tar" run 2>/dev/null; then
+    local diagnostic_input="run"
+    if [[ "$intake_mode" != "off" ]]; then
+      mkdir -p "$work_dir/diagnostic"
+      printf 'mode=intelligence-intake\nstatus=failed\n' > "$work_dir/diagnostic/summary.txt"
+      diagnostic_input="diagnostic"
+    fi
+    if [[ -e "$work_dir/$diagnostic_input" ]] && \
+      tar -C "$work_dir" -cf "$diagnostic_tar" "$diagnostic_input" 2>/dev/null; then
       "$age_bin" \
         -R "$repo_root/recipients/runtime-recipient.txt" \
         -o "$diagnostic_path" \
@@ -54,11 +86,21 @@ age_bin="$work_dir/bin/age"
 printf '%s\n' "$RUNTIME_AGE_IDENTITY" > "$work_dir/runtime.identity"
 chmod 600 "$work_dir/runtime.identity"
 
-"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/runtime-config.json" "$repo_root/sealed/runtime-config.json.age"
-"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/provider-overlay.py" "$repo_root/sealed/provider-overlay.py.age"
-"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/state.json" "$repo_root/sealed/checkpoint.json.age"
+"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/runtime-config.json" "$profile_root/runtime-config.json.age"
+"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/provider-overlay.py" "$profile_root/provider-overlay.py.age"
+"$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/state.json" "$profile_root/checkpoint.json.age"
 unset RUNTIME_AGE_IDENTITY
 rm -f -- "$work_dir/runtime.identity"
+
+if [[ "$intake_mode" != "off" ]]; then
+  PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli inspect-config \
+    --config "$work_dir/runtime-config.json" >/dev/null
+fi
+if [[ "$intake_mode" == "post" ]]; then
+  GATEX_INTELLIGENCE_INTAKE_SECRET="$intake_secret" \
+    PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli check-delivery \
+    --endpoint "${GATEX_INTELLIGENCE_INTAKE_URL:-}" >/dev/null
+fi
 
 if [[ -n "${EGRESS_PROXY_URI:-}" ]]; then
   egress_args=(
@@ -118,18 +160,36 @@ PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli run \
 new_count="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["new_count"]))' "$work_dir/result.json")"
 state_changed="$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["state_changed"] else "0")' "$work_dir/result.json")"
 
-if [[ "$state_changed" == "1" ]]; then
-  "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" -o "$work_dir/checkpoint.json.age" "$work_dir/state.next.json"
-  mv "$work_dir/checkpoint.json.age" "$repo_root/sealed/checkpoint.json.age"
+if [[ "$new_count" -gt 0 && "$intake_mode" != "off" ]]; then
+  PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli export-batch \
+    --batch "$work_dir/run/batch" \
+    --config "$work_dir/runtime-config.json" \
+    --output "$work_dir/intake.jsonl"
+  GATEX_INTELLIGENCE_INTAKE_SECRET="$intake_secret" \
+    PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli deliver \
+    --input "$work_dir/intake.jsonl" \
+    --mode "$intake_mode" \
+    --endpoint "${GATEX_INTELLIGENCE_INTAKE_URL:-}"
+  intake_secret=""
 fi
 
-if [[ "$new_count" -gt 0 ]]; then
+if [[ "$intake_mode" == "dry-run" ]]; then
+  echo "stage=state status=empty count=0 mode=dry-run"
+  exit 0
+fi
+
+if [[ "$state_changed" == "1" ]]; then
+  "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" -o "$work_dir/checkpoint.json.age" "$work_dir/state.next.json"
+  mv "$work_dir/checkpoint.json.age" "$profile_root/checkpoint.json.age"
+fi
+
+if [[ "$new_count" -gt 0 && "$intake_mode" == "off" ]]; then
   PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli pack \
     --source "$work_dir/run/batch" \
     --output "$work_dir/bundle.tar" \
     --id-file "$work_dir/bundle-id.txt"
   bundle_id="$(tr -d '\r\n' < "$work_dir/bundle-id.txt")"
-  destination="$repo_root/vault/${bundle_id:0:2}/$bundle_id.tar.age"
+  destination="$vault_root/${bundle_id:0:2}/$bundle_id.tar.age"
   mkdir -p "$(dirname "$destination")"
   "$age_bin" -R "$repo_root/recipients/export-recipient.txt" -o "$destination" "$work_dir/bundle.tar"
 fi
@@ -138,7 +198,7 @@ PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli guard \
   --root "$repo_root" \
   --config "$work_dir/runtime-config.json"
 
-git -C "$repo_root" add sealed/checkpoint.json.age vault
+git -C "$repo_root" add -- "$checkpoint_relative" "$vault_relative"
 if git -C "$repo_root" diff --cached --quiet; then
   echo "stage=state status=empty count=0"
   exit 0
@@ -146,6 +206,6 @@ fi
 
 git -C "$repo_root" config user.name "snapshot-pipeline[bot]"
 git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.github.com"
-git -C "$repo_root" commit -m "snapshot: update sealed ledger" -- sealed/checkpoint.json.age vault
+git -C "$repo_root" commit -m "snapshot: update sealed ledger" -- "$checkpoint_relative" "$vault_relative"
 git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"
 echo "stage=state status=ok count=$new_count"

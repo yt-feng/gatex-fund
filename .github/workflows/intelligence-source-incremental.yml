@@ -1,9 +1,26 @@
-name: scheduled-snapshot
+name: intelligence-source-incremental
 
 on:
   schedule:
-    - cron: "17 2 * * *"
+    - cron: "47 3 * * *"
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Sealed source profile
+        required: true
+        default: source-a
+        type: choice
+        options:
+          - source-a
+          - source-b
+      mode:
+        description: Validate only or send drafts to GateX
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - post
 
 permissions:
   contents: write
@@ -13,10 +30,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  snapshot:
-    if: ${{ vars.ENABLE_SNAPSHOT == 'true' }}
+  collect:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_INTELLIGENCE_SOURCE_INGEST == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,17 +51,22 @@ jobs:
         run: |
           python3 -m pip install --disable-pip-version-check .
           python3 -m playwright install --with-deps chromium
-      - name: Run sealed snapshot
+      - name: Run sealed source intake
         env:
           PYTHONPATH: src
           RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
           EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
+          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_INTELLIGENCE_INTAKE_URL: ${{ vars.GATEX_INTELLIGENCE_INTAKE_URL }}
+          SNAPSHOT_PROFILE_ROOT: sealed/intelligence-sources/${{ github.event_name == 'schedule' && 'source-a' || inputs.profile }}
+          SNAPSHOT_VAULT_DIR: vault-intelligence/${{ github.event_name == 'schedule' && 'source-a' || inputs.profile }}
+          SNAPSHOT_INTAKE_MODE: ${{ github.event_name == 'schedule' && 'post' || inputs.mode }}
         run: xvfb-run -a bash scripts/run_scheduled.sh
       - name: Upload sealed diagnostic
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sealed-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          name: sealed-intelligence-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/snapshot-diagnostic.tar.age
           if-no-files-found: warn
           retention-days: 1

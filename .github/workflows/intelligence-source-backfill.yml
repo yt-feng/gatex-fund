@@ -1,0 +1,61 @@
+name: intelligence-source-backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Sealed source profile
+        required: true
+        default: source-a
+        type: choice
+        options:
+          - source-a
+          - source-b
+      maximum_items:
+        description: Maximum articles prepared in this resumable page
+        required: true
+        default: "10"
+        type: string
+      mode:
+        description: Validate only or send drafts to GateX
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - post
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduled-source-state-main
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install runtime
+        run: python3 -m pip install --disable-pip-version-check .
+      - name: Run sealed TikHub backfill page
+        env:
+          PYTHONPATH: src
+          RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
+          TIKHUB_WECHAT_TOKEN: ${{ secrets.TIKHUB_WECHAT_TOKEN }}
+          TIKHUB_API_BASE: https://api.tikhub.io
+          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_INTELLIGENCE_INTAKE_URL: ${{ vars.GATEX_INTELLIGENCE_INTAKE_URL }}
+          INTELLIGENCE_SOURCE_PROFILE: ${{ inputs.profile }}
+          INTELLIGENCE_BACKFILL_MAXIMUM_ITEMS: ${{ inputs.maximum_items }}
+          INTELLIGENCE_DELIVERY_MODE: ${{ inputs.mode }}
+        run: bash scripts/run_intelligence_backfill.sh

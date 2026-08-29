@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gatex.fund/schemas/gatex-intelligence-intake-v1.json",
+  "title": "GateX Intelligence source intake envelope",
+  "type": "object",
+  "required": [
+    "schema",
+    "channelKey",
+    "externalId",
+    "idempotencyKey",
+    "topic",
+    "triggerDraft",
+    "sources",
+    "evidence",
+    "metadata"
+  ],
+  "properties": {
+    "schema": { "const": "gatex-intelligence-intake/v1" },
+    "channelKey": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "externalId": { "type": "string", "pattern": "^wechat:[a-f0-9]{64}$" },
+    "idempotencyKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "topic": {
+      "type": "object",
+      "required": [
+        "title",
+        "brief",
+        "industry",
+        "language",
+        "accessScope",
+        "priority",
+        "provenanceType"
+      ],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 340 },
+        "brief": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "industry": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "language": { "enum": ["zh", "en"] },
+        "accessScope": { "enum": ["public", "member", "advanced", "staff"] },
+        "priority": { "enum": ["low", "normal", "high", "urgent"] },
+        "provenanceType": { "const": "source_channel" }
+      },
+      "additionalProperties": false
+    },
+    "triggerDraft": { "type": "boolean" },
+    "privateDocument": {
+      "type": "object",
+      "required": ["mimeType", "content", "sha256"],
+      "properties": {
+        "mimeType": { "const": "text/plain; charset=utf-8" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 2000000 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "url",
+          "title",
+          "publisher",
+          "publishedAt",
+          "excerpt",
+          "contentHash",
+          "status",
+          "qualityScore",
+          "relevanceScore",
+          "metadata"
+        ],
+        "properties": {
+          "kind": { "const": "social" },
+          "url": {
+            "type": "string",
+            "pattern": "^https://mp\\.weixin\\.qq\\.com/s\\?__biz=[^&]+&mid=[^&]+&idx=[^&]+&sn=[^&]+$"
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "publisher": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "excerpt": { "type": "string", "maxLength": 180 },
+          "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "status": { "enum": ["accepted", "withdrawn"] },
+          "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
+          "relevanceScore": { "type": "number", "minimum": 0, "maximum": 1 },
+          "metadata": {
+            "type": "object",
+            "required": [
+              "author",
+              "accountDisplayName",
+              "sourceIdentityHash",
+              "collectionMethod",
+              "attributionRequired",
+              "factCheckRequired",
+              "maxQuoteCharacters",
+              "reusePolicy",
+              "deletionStatus",
+              "rightsReviewStatus"
+            ],
+            "properties": {
+              "author": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "accountDisplayName": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "sourceIdentityHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "collectionMethod": { "enum": ["sogou_incremental", "tikhub_backfill"] },
+              "attributionRequired": { "const": true },
+              "factCheckRequired": { "const": true },
+              "maxQuoteCharacters": { "const": 180 },
+              "reusePolicy": { "const": "original_summary_only" },
+              "deletionStatus": { "enum": ["active", "removed", "unknown"] },
+              "rightsReviewStatus": { "const": "pending_editor_review" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["sourceUrl", "claimId", "excerpt", "confidence", "status", "metadata"],
+        "properties": {
+          "sourceUrl": { "type": "string" },
+          "claimId": { "type": "string", "minLength": 1 },
+          "excerpt": { "type": "string", "maxLength": 180 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "status": { "enum": ["needs_verification", "withdrawn"] },
+          "metadata": {
+            "type": "object",
+            "required": ["quotation", "editorMustVerifyAgainstSource"],
+            "properties": {
+              "quotation": { "const": true },
+              "editorMustVerifyAgainstSource": { "const": true }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "pipeline",
+        "publicationState",
+        "humanApprovalRequired",
+        "autoPublish",
+        "sourceAuthor",
+        "sourcePublisher",
+        "sourcePublishedAt",
+        "sourceContentHash",
+        "sourceDeletionStatus"
+      ],
+      "properties": {
+        "pipeline": { "const": "gatex_curated_source_v1" },
+        "publicationState": { "enum": ["draft", "source_removed"] },
+        "humanApprovalRequired": { "const": true },
+        "autoPublish": { "const": false },
+        "sourceAuthor": { "type": "string", "minLength": 1 },
+        "sourcePublisher": { "type": "string", "minLength": 1 },
+        "sourcePublishedAt": { "type": "string", "format": "date-time" },
+        "sourceContentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceDeletionStatus": { "enum": ["active", "removed", "unknown"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "triggerDraft": { "const": true } },
+        "required": ["triggerDraft"]
+      },
+      "then": { "required": ["privateDocument"] },
+      "else": { "not": { "required": ["privateDocument"] } }
+    }
+  ],
+  "additionalProperties": false
+}
