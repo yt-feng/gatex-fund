@@ -9,7 +9,11 @@ from pathlib import Path
 from snapshot_pipeline.io import load_json
 
 from .contract import envelopes_from_batch, write_jsonl
-from .delivery import deliver_file, validate_delivery_configuration
+from .delivery import (
+    IntakeDeliveryError,
+    deliver_file,
+    validate_delivery_configuration,
+)
 from .tikhub_backfill import TikHubTransport, run_backfill_page, verify_profile
 
 
@@ -127,8 +131,11 @@ def main(argv: list[str] | None = None) -> int:
             print("stage=profile-verification status=ok count=1")
             return 0
     except BaseException as error:
+        diagnostic = ""
+        if isinstance(error, IntakeDeliveryError):
+            diagnostic = " " + " ".join(error.diagnostic_fields())
         print(
-            f"stage=intake status=failed error_type={type(error).__name__}",
+            f"stage=intake status=failed error_type={type(error).__name__}{diagnostic}",
             file=sys.stderr,
         )
         return 1

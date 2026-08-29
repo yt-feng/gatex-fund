@@ -59,7 +59,9 @@ The only allowed delivery target is:
 `dry-run` validates and counts envelopes without opening a network connection.
 `post` requires `GATEX_INTELLIGENCE_INTAKE_SECRET` and sends the idempotency key in
 both the envelope and request header. The delivery client rejects every redirect
-so its bearer secret is never replayed to a redirected URL.
+so its bearer secret is never replayed to a redirected URL. It also disables
+environment proxy discovery for the GateX request, keeping the collector's egress
+proxy isolated from authenticated intake delivery.
 Scheduled `post` mode validates that secret and the exact endpoint before source
 collection, including runs that discover zero new articles.
 
@@ -83,10 +85,13 @@ GateX POSTs succeed. Dry-run never advances the cursor. It requires a
 `TIKHUB_WECHAT_TOKEN` authorized for TikHub WeChat MP V2 profile, article list,
 and article detail endpoints.
 
-Collection, identity, and delivery failures fail the Actions job with a generic
-stage and error class. They do not advance the encrypted checkpoint, so the same
-source can be replayed safely. Intelligence failure diagnostics contain only a
-sealed generic summary; they never package the full runner capture.
+Collection and identity failures fail the Actions job with a generic stage and
+error class. Delivery failures additionally expose only a fixed category, HTTP
+status when available, and exception class; they never print a response body,
+request body, endpoint, or credential. Failures do not advance the encrypted
+checkpoint, so the same source can be replayed safely. Intelligence failure
+diagnostics contain only a sealed generic summary; they never package the full
+runner capture.
 
 ## Activation checklist
 

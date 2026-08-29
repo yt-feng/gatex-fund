@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
+import os
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from intelligence_sources.contract import (
     MAX_EVIDENCE_EXCERPT_CHARS,
@@ -19,6 +24,7 @@ from intelligence_sources.contract import (
 from intelligence_sources.delivery import (
     IntakeDeliveryError,
     RejectRedirects,
+    build_direct_opener,
     deliver_envelopes,
     deliver_file,
 )
@@ -247,6 +253,37 @@ class ContractTests(unittest.TestCase):
 
 
 class DeliveryTests(unittest.TestCase):
+    def test_gatex_delivery_ignores_collector_proxy_environment(self):
+        proxy_url = "http://collector-proxy.invalid:8080"
+        token = "synthetic-token-value-1234567890"
+        with patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": proxy_url,
+                "HTTP_PROXY": proxy_url,
+                "ALL_PROXY": proxy_url,
+                "https_proxy": proxy_url,
+                "http_proxy": proxy_url,
+                "all_proxy": proxy_url,
+            },
+            clear=False,
+        ):
+            with patch(
+                "urllib.request.getproxies",
+                return_value={"https": proxy_url},
+            ) as proxy_discovery:
+                opener = build_direct_opener()
+            proxy_discovery.assert_not_called()
+
+        proxy_handlers = [
+            handler
+            for handler in opener.handlers
+            if isinstance(handler, urllib.request.ProxyHandler)
+        ]
+        self.assertEqual(proxy_handlers, [])
+        self.assertNotIn(proxy_url, repr(opener.handlers))
+        self.assertNotIn(token, repr(opener.handlers))
+
     def test_dry_run_never_opens_network(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "intake.jsonl"
@@ -288,8 +325,13 @@ class DeliveryTests(unittest.TestCase):
             opener=opener,
         )
         self.assertEqual(count, 1)
-        self.assertEqual(captured[0][0].get_header("Idempotency-key"), envelope["idempotencyKey"])
-        self.assertTrue(captured[0][0].get_header("Authorization").startswith("Bearer "))
+        self.assertEqual(
+            captured[0][0].get_header("Idempotency-key"),
+            envelope["idempotencyKey"],
+        )
+        self.assertTrue(
+            captured[0][0].get_header("Authorization").startswith("Bearer ")
+        )
 
     def test_dry_run_rejects_worker_contract_mismatches_and_extra_content(self):
         envelope = build_envelope(
@@ -390,6 +432,74 @@ class DeliveryTests(unittest.TestCase):
                 token="synthetic-token-value-1234567890",
                 opener=lambda request, timeout: RedirectResponse(),
             )
+
+    def test_retry_failure_exposes_only_sanitized_status_and_error_class(self):
+        envelope = build_envelope(
+            channel_key="synthetic-channel",
+            title="Synthetic source title",
+            publisher="Synthetic Publisher",
+            author="Synthetic Author",
+            source_url=SOURCE_URL,
+            published_at="2026-08-29T01:02:03Z",
+            content="Synthetic content.",
+        )
+        secret = "synthetic-token-value-1234567890"
+
+        class Response:
+            status = 503
+            body = f"upstream failure with {secret}"
+
+        def opener(request, timeout):
+            return Response()
+
+        with self.assertRaises(IntakeDeliveryError) as raised:
+            deliver_envelopes(
+                [envelope],
+                endpoint="https://gatex.fund/api/integrations/intelligence/intake",
+                token=secret,
+                attempts=1,
+                opener=opener,
+            )
+        diagnostic = " ".join(raised.exception.diagnostic_fields())
+        self.assertEqual(
+            diagnostic,
+            "category=http-retryable http_status=503 cause_type=HTTPResponse",
+        )
+        self.assertNotIn(secret, diagnostic)
+        self.assertNotIn("upstream failure", diagnostic)
+
+    def test_cli_failure_log_never_prints_secret_or_response_body(self):
+        from intelligence_sources import cli
+
+        secret = "synthetic-token-value-1234567890"
+        error = IntakeDeliveryError(
+            f"upstream response contained {secret}",
+            category="http-retryable",
+            http_status=503,
+            cause_type="HTTPError",
+        )
+        stderr = io.StringIO()
+        with patch("intelligence_sources.cli.deliver_file", side_effect=error):
+            with contextlib.redirect_stderr(stderr):
+                status = cli.main(
+                    [
+                        "deliver",
+                        "--input",
+                        "/does/not/matter.jsonl",
+                        "--mode",
+                        "post",
+                        "--endpoint",
+                        "https://gatex.fund/api/integrations/intelligence/intake",
+                    ]
+                )
+        output = stderr.getvalue()
+        self.assertEqual(status, 1)
+        self.assertIn("error_type=IntakeDeliveryError", output)
+        self.assertIn("category=http-retryable", output)
+        self.assertIn("http_status=503", output)
+        self.assertIn("cause_type=HTTPError", output)
+        self.assertNotIn(secret, output)
+        self.assertNotIn("upstream response", output)
 
 
 class TikHubBackfillTests(unittest.TestCase):
