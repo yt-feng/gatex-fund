@@ -92,6 +92,12 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(source["excerpt"]["maxLength"], MAX_SOURCE_EXCERPT_CHARS)
         deletion = source["metadata"]["properties"]["deletionStatus"]["enum"]
         self.assertEqual(deletion, ["active", "removed", "unknown"])
+        metadata = schema["properties"]["metadata"]["properties"]
+        self.assertEqual(metadata["productionMethod"]["const"], "curated_source")
+        self.assertEqual(metadata["brand"]["const"], "GateX")
+        self.assertEqual(metadata["presentationFormat"]["const"], "gatex_report_v1")
+        self.assertFalse(metadata["humanApprovalRequired"]["const"])
+        self.assertTrue(metadata["machineQualityGateRequired"]["const"])
         private_document = schema["properties"]["privateDocument"]
         self.assertEqual(
             private_document["properties"]["mimeType"]["const"],
@@ -117,11 +123,18 @@ class ContractTests(unittest.TestCase):
         source = envelope["sources"][0]
         self.assertTrue(envelope["triggerDraft"])
         self.assertEqual(envelope["topic"]["provenanceType"], "source_channel")
-        self.assertFalse(envelope["metadata"]["autoPublish"])
+        self.assertTrue(envelope["metadata"]["autoPublish"])
+        self.assertTrue(envelope["metadata"]["autoPublishAfterQuality"])
+        self.assertFalse(envelope["metadata"]["humanApprovalRequired"])
+        self.assertEqual(envelope["metadata"]["productionMethod"], "curated_source")
+        self.assertEqual(envelope["metadata"]["brand"], "GateX")
+        self.assertEqual(envelope["metadata"]["presentationFormat"], "gatex_report_v1")
+        self.assertEqual(envelope["metadata"]["publicationState"], "auto_publish_pending")
         self.assertEqual(source["metadata"]["author"], "Synthetic Author")
         self.assertEqual(source["metadata"]["deletionStatus"], "active")
         self.assertEqual(source["kind"], "social")
         self.assertEqual(source["status"], "accepted")
+        self.assertEqual(envelope["evidence"][0]["status"], "accepted")
         self.assertEqual(envelope["topic"]["language"], "zh")
         self.assertEqual(envelope["topic"]["accessScope"], "member")
         self.assertLessEqual(len(source["excerpt"]), MAX_SOURCE_EXCERPT_CHARS)
@@ -170,6 +183,8 @@ class ContractTests(unittest.TestCase):
             deletion_status="removed",
         )
         self.assertFalse(envelope["triggerDraft"])
+        self.assertFalse(envelope["metadata"]["autoPublish"])
+        self.assertFalse(envelope["metadata"]["autoPublishAfterQuality"])
         self.assertEqual(envelope["metadata"]["publicationState"], "source_removed")
         self.assertEqual(envelope["sources"][0]["status"], "withdrawn")
         self.assertEqual(envelope["evidence"][0]["status"], "withdrawn")
@@ -349,7 +364,7 @@ class DeliveryTests(unittest.TestCase):
             "provenance": lambda value: value["topic"].update(provenanceType="curated_source"),
             "source-kind": lambda value: value["sources"][0].update(kind="wechat_official_account"),
             "source-status": lambda value: value["sources"][0].update(status="withdrawn"),
-            "auto-publish": lambda value: value["metadata"].update(autoPublish=True),
+            "disable-auto-publish": lambda value: value["metadata"].update(autoPublish=False),
             "full-content": lambda value: value["sources"][0].update(content="not allowed"),
             "missing-private-document": lambda value: value.pop("privateDocument"),
             "private-document-hash": lambda value: value["privateDocument"].update(

@@ -109,7 +109,7 @@
               "maxQuoteCharacters": { "const": 180 },
               "reusePolicy": { "const": "original_summary_only" },
               "deletionStatus": { "enum": ["active", "removed", "unknown"] },
-              "rightsReviewStatus": { "const": "pending_editor_review" }
+              "rightsReviewStatus": { "const": "policy_cleared" }
             },
             "additionalProperties": false
           }
@@ -129,13 +129,13 @@
           "claimId": { "type": "string", "minLength": 1 },
           "excerpt": { "type": "string", "maxLength": 180 },
           "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-          "status": { "enum": ["needs_verification", "withdrawn"] },
+          "status": { "enum": ["accepted", "withdrawn"] },
           "metadata": {
             "type": "object",
-            "required": ["quotation", "editorMustVerifyAgainstSource"],
+            "required": ["quotation", "generationMustVerifyIndependently"],
             "properties": {
               "quotation": { "const": true },
-              "editorMustVerifyAgainstSource": { "const": true }
+              "generationMustVerifyIndependently": { "const": true }
             },
             "additionalProperties": false
           }
@@ -147,9 +147,14 @@
       "type": "object",
       "required": [
         "pipeline",
+        "productionMethod",
+        "brand",
+        "presentationFormat",
         "publicationState",
         "humanApprovalRequired",
         "autoPublish",
+        "autoPublishAfterQuality",
+        "machineQualityGateRequired",
         "sourceAuthor",
         "sourcePublisher",
         "sourcePublishedAt",
@@ -158,9 +163,14 @@
       ],
       "properties": {
         "pipeline": { "const": "gatex_curated_source_v1" },
-        "publicationState": { "enum": ["draft", "source_removed"] },
-        "humanApprovalRequired": { "const": true },
-        "autoPublish": { "const": false },
+        "productionMethod": { "const": "curated_source" },
+        "brand": { "const": "GateX" },
+        "presentationFormat": { "const": "gatex_report_v1" },
+        "publicationState": { "enum": ["auto_publish_pending", "source_removed"] },
+        "humanApprovalRequired": { "const": false },
+        "autoPublish": { "type": "boolean" },
+        "autoPublishAfterQuality": { "type": "boolean" },
+        "machineQualityGateRequired": { "const": true },
         "sourceAuthor": { "type": "string", "minLength": 1 },
         "sourcePublisher": { "type": "string", "minLength": 1 },
         "sourcePublishedAt": { "type": "string", "format": "date-time" },

@@ -1,7 +1,8 @@
 # GateX Intelligence source intake
 
 This repository owns the runnable source collectors. The GateX web application
-owns intake persistence, report generation, review, and publication. The
+owns intake persistence, report generation, the machine quality gate, PDF
+release, and publication. The
 collectors never publish a report directly.
 
 ## Source profiles
@@ -10,7 +11,8 @@ Public source identity is kept inside sealed profiles. Do not add account names,
 identifiers, article text, credentials, or private URLs to plaintext files in
 this repository.
 
-- `source-a`: verified and enabled. Its incremental Sogou cursor starts from the
+- `source-a`: verified and enabled as the scheduled `curated_source` production
+  method. Its incremental Sogou cursor starts from the
   existing sealed checkpoint so a migration does not replay the full archive.
   Its TikHub backfill cursor is independent and resumable.
 - `source-b`: disabled and fail-closed. The public display identity is known,
@@ -45,12 +47,19 @@ differs. GateX merges those observations by `(channelKey,
 externalId)` into one durable generation job and by canonical URL into one
 source record; a changed hash remains visible as a new observation.
 
-The envelope records an explicit `accepted` or `withdrawn` source status and
-requests an original GateX scan. It requires independent fact
-checking, attribution, a maximum 180-character source excerpt, draft-only
-creation, and human approval. Removed sources are marked `withdrawn`, force
-`triggerDraft=false`, omit `privateDocument`, delete or block any existing
-generation object, and remain available as a deletion audit event.
+The envelope records matching `accepted` source/evidence statuses only after
+collector policy validation, or matching `withdrawn` statuses for a removed
+item, and requests an original GateX Intelligence edition. Pending rights or
+`needs_verification` states are never auto-cleared by the publication score and
+remain fail-closed in GateX. Every output is branded as
+GateX and uses `gatex_report_v1`; the source article is never republished as the
+product. Active source-a items require independent fact checking, attribution,
+a maximum 180-character source excerpt, the deterministic publication audit and
+an automated review score of at least 80. Only after those machine gates pass
+does GateX queue its standard PDF and publish it without a pre-publication human
+review. Any missing or failed gate stops publication. Removed sources are marked
+`withdrawn`, force `triggerDraft=false`, omit `privateDocument`, delete or block
+any existing generation object, and remain available as a deletion audit event.
 
 The only allowed delivery target is:
 
@@ -69,9 +78,11 @@ collection, including runs that discover zero new articles.
 
 `.github/workflows/intelligence-source-incremental.yml` reuses the hardened
 Sogou provider and encrypted checkpoint. Its plaintext capture exists only in
-the temporary runner directory and is erased on exit. Scheduled execution is gated by the
-repository variable `ENABLE_INTELLIGENCE_SOURCE_INGEST=true`. Manual dispatch
-defaults to `dry-run`. Delivery completes before the encrypted cursor advances,
+the temporary runner directory and is erased on exit. Scheduled execution is
+gated by the repository variable `ENABLE_INTELLIGENCE_SOURCE_INGEST=true`; once
+enabled it always selects source-a and posts to GateX. Manual dispatch defaults
+to `dry-run`; source-b remains disabled inside its sealed profile and therefore
+fails closed if a production post is attempted. Delivery completes before the encrypted cursor advances,
 so a failed POST can be retried without losing the article.
 All checkpoint-writing workflows share one non-cancelling concurrency group so
 the existing archive, incremental intake, and manual backfill cannot race a push.
@@ -99,7 +110,8 @@ runner capture.
 2. Add `GATEX_INTELLIGENCE_INTAKE_SECRET` as a GitHub Actions secret.
 3. Set `GATEX_INTELLIGENCE_INTAKE_URL` to the exact allowed endpoint.
 4. Manually run each enabled profile in `dry-run` mode.
-5. Set `ENABLE_INTELLIGENCE_SOURCE_INGEST=true` only after dry-run validation.
+5. Set `ENABLE_INTELLIGENCE_SOURCE_INGEST=true` only after the main-site E2E and
+   source-a dry-run validation both pass.
 6. Keep source-b disabled until its exact TikHub username is independently
    verified and sealed.
 

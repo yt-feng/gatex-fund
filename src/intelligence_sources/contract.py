@@ -189,10 +189,11 @@ def build_envelope(
         "externalId": external_id,
         "idempotencyKey": idempotency_key,
         "topic": {
-            "title": f"Source-linked scan: {clean_title}",
+            "title": f"GateX Perspective: {clean_title}",
             "brief": (
-                "Create an original GateX market or technology scan linked to the source below. "
-                "Attribute the author and publisher, verify factual claims independently, use only "
+                "Create an original GateX Intelligence edition from the source signal below. "
+                "Use the GateX report format and visual identity throughout, attribute the author "
+                "and publisher, verify material claims with independent public sources, use only "
                 "short quotations, and never reproduce the article in full."
             ),
             "industry": clean_industry,
@@ -224,7 +225,7 @@ def build_envelope(
                     "maxQuoteCharacters": MAX_EVIDENCE_EXCERPT_CHARS,
                     "reusePolicy": "original_summary_only",
                     "deletionStatus": clean_deletion_status,
-                    "rightsReviewStatus": "pending_editor_review",
+                    "rightsReviewStatus": "policy_cleared",
                 },
             }
         ],
@@ -234,18 +235,23 @@ def build_envelope(
                 "claimId": f"source-excerpt:{identity_hash[:16]}",
                 "excerpt": evidence_excerpt,
                 "confidence": 0.55,
-                "status": "needs_verification" if source_is_active else "withdrawn",
+                "status": "accepted" if source_is_active else "withdrawn",
                 "metadata": {
                     "quotation": True,
-                    "editorMustVerifyAgainstSource": True,
+                    "generationMustVerifyIndependently": True,
                 },
             }
         ],
         "metadata": {
             "pipeline": "gatex_curated_source_v1",
-            "publicationState": "draft" if source_is_active else "source_removed",
-            "humanApprovalRequired": True,
-            "autoPublish": False,
+            "productionMethod": "curated_source",
+            "brand": "GateX",
+            "presentationFormat": "gatex_report_v1",
+            "publicationState": "auto_publish_pending" if source_is_active else "source_removed",
+            "humanApprovalRequired": False,
+            "autoPublish": source_is_active,
+            "autoPublishAfterQuality": source_is_active,
+            "machineQualityGateRequired": True,
             "sourceAuthor": clean_author,
             "sourcePublisher": clean_publisher,
             "sourcePublishedAt": clean_published_at,
@@ -372,7 +378,7 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     deletion_status = source_metadata.get("deletionStatus")
     if deletion_status not in {"active", "removed", "unknown"}:
         raise IntakeContractError("source deletion status is invalid")
-    if source_metadata.get("rightsReviewStatus") != "pending_editor_review":
+    if source_metadata.get("rightsReviewStatus") != "policy_cleared":
         raise IntakeContractError("source rights review status is invalid")
 
     source_is_active = deletion_status == "active"
@@ -416,18 +422,18 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     if not isinstance(evidence_excerpt, str) or len(evidence_excerpt) > MAX_EVIDENCE_EXCERPT_CHARS:
         raise IntakeContractError("evidence excerpt is invalid")
     _bounded_number(evidence.get("confidence"), "evidence.confidence")
-    expected_evidence_status = "needs_verification" if source_is_active else "withdrawn"
+    expected_evidence_status = "accepted" if source_is_active else "withdrawn"
     if evidence.get("status") != expected_evidence_status:
         raise IntakeContractError("evidence status is inconsistent with source status")
     evidence_metadata = _object(evidence.get("metadata"), "evidence.metadata")
     _exact_fields(
         evidence_metadata,
-        {"quotation", "editorMustVerifyAgainstSource"},
+        {"quotation", "generationMustVerifyIndependently"},
         "evidence.metadata",
     )
     if evidence_metadata.get("quotation") is not True:
         raise IntakeContractError("evidence quotation flag is invalid")
-    if evidence_metadata.get("editorMustVerifyAgainstSource") is not True:
+    if evidence_metadata.get("generationMustVerifyIndependently") is not True:
         raise IntakeContractError("evidence verification flag is invalid")
 
     metadata = _object(envelope.get("metadata"), "metadata")
@@ -435,9 +441,14 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
         metadata,
         {
             "pipeline",
+            "productionMethod",
+            "brand",
+            "presentationFormat",
             "publicationState",
             "humanApprovalRequired",
             "autoPublish",
+            "autoPublishAfterQuality",
+            "machineQualityGateRequired",
             "sourceAuthor",
             "sourcePublisher",
             "sourcePublishedAt",
@@ -448,11 +459,21 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     )
     if metadata.get("pipeline") != "gatex_curated_source_v1":
         raise IntakeContractError("metadata.pipeline is invalid")
-    expected_publication_state = "draft" if source_is_active else "source_removed"
+    if metadata.get("productionMethod") != "curated_source":
+        raise IntakeContractError("metadata.productionMethod is invalid")
+    if metadata.get("brand") != "GateX" or metadata.get("presentationFormat") != "gatex_report_v1":
+        raise IntakeContractError("GateX presentation metadata is invalid")
+    expected_publication_state = "auto_publish_pending" if source_is_active else "source_removed"
     if metadata.get("publicationState") != expected_publication_state:
         raise IntakeContractError("metadata.publicationState is invalid")
-    if metadata.get("humanApprovalRequired") is not True or metadata.get("autoPublish") is not False:
+    if metadata.get("humanApprovalRequired") is not False:
         raise IntakeContractError("publication governance is invalid")
+    if metadata.get("autoPublish") is not source_is_active:
+        raise IntakeContractError("automatic publication state is inconsistent with source status")
+    if metadata.get("autoPublishAfterQuality") is not source_is_active:
+        raise IntakeContractError("quality-gated publication state is inconsistent with source status")
+    if metadata.get("machineQualityGateRequired") is not True:
+        raise IntakeContractError("machine quality gate must be required")
     if metadata.get("sourceAuthor") != author or metadata.get("sourcePublisher") != publisher:
         raise IntakeContractError("source attribution metadata does not match")
     if metadata.get("sourcePublishedAt") != published_at:

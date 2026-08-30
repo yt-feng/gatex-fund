@@ -31,6 +31,10 @@ concurrency:
 
 jobs:
   collect:
+    # source-a is the only scheduled production source. source-b remains sealed,
+    # disabled and available only for manual identity/dry-run validation.
+    # The schedule remains fail-closed until the main-site E2E gate is complete;
+    # manual dry-runs remain available while the repository variable is false.
     if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_INTELLIGENCE_SOURCE_INGEST == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
