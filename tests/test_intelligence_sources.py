@@ -149,11 +149,16 @@ class ContractTests(unittest.TestCase):
             True,
         )
         self.assertEqual(official["channelKey"]["const"], OFFICIAL_REPORT_CHANNEL_KEY)
+        self.assertEqual(OFFICIAL_REPORT_CHANNEL_KEY, "gatex-e2e-official-source-v2")
         self.assertEqual(official["externalId"]["const"], OFFICIAL_REPORT_EXTERNAL_ID)
         official_envelope = build_official_report_e2e_envelope()
         self.assertEqual(
             official["idempotencyKey"]["const"],
             official_envelope["idempotencyKey"],
+        )
+        self.assertEqual(
+            official_envelope["idempotencyKey"],
+            "a8f4a3029e36c529e1964121e97282f3412bc6b26175b57daff3df8eb2ab1130",
         )
         official_source = official["sources"]["items"]["properties"]
         self.assertEqual(official_source["kind"]["const"], "report")
@@ -935,6 +940,15 @@ class ControlledOfficialReportE2ETests(unittest.TestCase):
         second = build_e2e_envelope()
         self.assertEqual(first, second)
         self.assertEqual(first["channelKey"], OFFICIAL_REPORT_CHANNEL_KEY)
+        self.assertEqual(first["channelKey"], "gatex-e2e-official-source-v2")
+        self.assertEqual(
+            first["idempotencyKey"],
+            "a8f4a3029e36c529e1964121e97282f3412bc6b26175b57daff3df8eb2ab1130",
+        )
+        self.assertNotEqual(
+            first["idempotencyKey"],
+            "be71eb9f01419769016f537b839f1d7c099afc87f9b8b1ecc12a4e7c2769506f",
+        )
         self.assertEqual(first["externalId"], OFFICIAL_REPORT_EXTERNAL_ID)
         self.assertEqual(first["topic"]["accessScope"], "public")
         self.assertTrue(first["triggerDraft"])
