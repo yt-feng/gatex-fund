@@ -17,7 +17,13 @@
   "properties": {
     "schema": { "const": "gatex-intelligence-intake/v1" },
     "channelKey": { "type": "string", "minLength": 1, "maxLength": 120 },
-    "externalId": { "type": "string", "pattern": "^wechat:[a-f0-9]{64}$" },
+    "externalId": {
+      "type": "string",
+      "oneOf": [
+        { "pattern": "^wechat:[a-f0-9]{64}$" },
+        { "const": "official:5fe6e9b46dceb04398d64047fbe9e26e883dd2472c122b8aa0674883e7be385d" }
+      ]
+    },
     "idempotencyKey": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "topic": {
       "type": "object",
@@ -72,11 +78,8 @@
           "metadata"
         ],
         "properties": {
-          "kind": { "const": "social" },
-          "url": {
-            "type": "string",
-            "pattern": "^https://mp\\.weixin\\.qq\\.com/s\\?__biz=[^&]+&mid=[^&]+&idx=[^&]+&sn=[^&]+$"
-          },
+          "kind": { "enum": ["social", "report"] },
+          "url": { "type": "string", "minLength": 1, "maxLength": 2048 },
           "title": { "type": "string", "minLength": 1, "maxLength": 300 },
           "publisher": { "type": "string", "minLength": 1, "maxLength": 160 },
           "publishedAt": { "type": "string", "format": "date-time" },
@@ -103,7 +106,13 @@
               "author": { "type": "string", "minLength": 1, "maxLength": 160 },
               "accountDisplayName": { "type": "string", "minLength": 1, "maxLength": 160 },
               "sourceIdentityHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-              "collectionMethod": { "enum": ["sogou_incremental", "tikhub_backfill"] },
+              "collectionMethod": {
+                "enum": [
+                  "sogou_incremental",
+                  "tikhub_backfill",
+                  "manual_e2e_official_source"
+                ]
+              },
               "attributionRequired": { "const": true },
               "factCheckRequired": { "const": true },
               "maxQuoteCharacters": { "const": 180 },
@@ -134,7 +143,7 @@
             "type": "object",
             "required": ["quotation", "generationMustVerifyIndependently"],
             "properties": {
-              "quotation": { "const": true },
+              "quotation": { "type": "boolean" },
               "generationMustVerifyIndependently": { "const": true }
             },
             "additionalProperties": false
@@ -180,6 +189,149 @@
       "additionalProperties": false
     }
   },
+  "oneOf": [
+    {
+      "title": "WeChat social article",
+      "properties": {
+        "externalId": { "pattern": "^wechat:[a-f0-9]{64}$" },
+        "sources": {
+          "items": {
+            "properties": {
+              "kind": { "const": "social" },
+              "url": {
+                "pattern": "^https://mp\\.weixin\\.qq\\.com/s\\?__biz=[^&]+&mid=[^&]+&idx=[^&]+&sn=[^&]+$"
+              },
+              "metadata": {
+                "properties": {
+                  "collectionMethod": { "enum": ["sogou_incremental", "tikhub_backfill"] }
+                }
+              }
+            }
+          }
+        },
+        "evidence": {
+          "items": {
+            "properties": {
+              "metadata": { "properties": { "quotation": { "const": true } } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "Controlled IEA official report probe",
+      "properties": {
+        "channelKey": { "const": "gatex-e2e-official-source" },
+        "externalId": {
+          "const": "official:5fe6e9b46dceb04398d64047fbe9e26e883dd2472c122b8aa0674883e7be385d"
+        },
+        "idempotencyKey": {
+          "const": "be71eb9f01419769016f537b839f1d7c099afc87f9b8b1ecc12a4e7c2769506f"
+        },
+        "triggerDraft": { "const": true },
+        "topic": {
+          "properties": {
+            "title": { "const": "GateX Perspective: Energy and AI" },
+            "brief": {
+              "const": "Create an original GateX decision-intelligence edition from this official public source signal. Independently verify all material facts, explain the implications for China and Gulf markets, cite primary sources, use only short quotations, and do not reproduce the source report."
+            },
+            "industry": { "const": "AI infrastructure" },
+            "language": { "const": "en" },
+            "accessScope": { "const": "public" },
+            "priority": { "const": "normal" },
+            "provenanceType": { "const": "source_channel" }
+          }
+        },
+        "privateDocument": {
+          "properties": {
+            "mimeType": { "const": "text/plain; charset=utf-8" },
+            "content": {
+              "const": "The IEA Energy and AI report estimates data-centre electricity consumption at about 415 TWh in 2024 and projects about 945 TWh by 2030 in its base case. GateX should independently verify the figures and assess grid, supply-chain and investment implications for China and Gulf markets."
+            },
+            "sha256": {
+              "const": "048e969714029b984b4e0ade0fc0e95fd50efba3c7680cfe5d8482d9bd962741"
+            }
+          }
+        },
+        "sources": {
+          "items": {
+            "properties": {
+              "kind": { "const": "report" },
+              "url": { "const": "https://www.iea.org/reports/energy-and-ai" },
+              "title": { "const": "Energy and AI" },
+              "publisher": { "const": "International Energy Agency" },
+              "publishedAt": { "const": "2025-04-10T00:00:00Z" },
+              "excerpt": {
+                "const": "The IEA Energy and AI report estimates data-centre electricity consumption at about 415 TWh in 2024 and projects about 945 TWh by 2030 in its base case. GateX should independently…"
+              },
+              "contentHash": {
+                "const": "048e969714029b984b4e0ade0fc0e95fd50efba3c7680cfe5d8482d9bd962741"
+              },
+              "status": { "const": "accepted" },
+              "qualityScore": { "const": 0.9 },
+              "relevanceScore": { "const": 0.9 },
+              "metadata": {
+                "properties": {
+                  "author": { "const": "International Energy Agency" },
+                  "accountDisplayName": { "const": "International Energy Agency" },
+                  "sourceIdentityHash": {
+                    "const": "5fe6e9b46dceb04398d64047fbe9e26e883dd2472c122b8aa0674883e7be385d"
+                  },
+                  "collectionMethod": { "const": "manual_e2e_official_source" },
+                  "attributionRequired": { "const": true },
+                  "factCheckRequired": { "const": true },
+                  "maxQuoteCharacters": { "const": 180 },
+                  "reusePolicy": { "const": "original_summary_only" },
+                  "deletionStatus": { "const": "active" },
+                  "rightsReviewStatus": { "const": "policy_cleared" }
+                }
+              }
+            }
+          }
+        },
+        "evidence": {
+          "items": {
+            "properties": {
+              "sourceUrl": { "const": "https://www.iea.org/reports/energy-and-ai" },
+              "claimId": { "const": "official-source-note:5fe6e9b46dceb043" },
+              "excerpt": {
+                "const": "The IEA Energy and AI report estimates data-centre electricity consumption at about 415 TWh in 2024 and projects about 945 TWh by 2030 in its base case. GateX should independently…"
+              },
+              "confidence": { "const": 0.8 },
+              "status": { "const": "accepted" },
+              "metadata": {
+                "properties": {
+                  "quotation": { "const": false },
+                  "generationMustVerifyIndependently": { "const": true }
+                }
+              }
+            }
+          }
+        },
+        "metadata": {
+          "properties": {
+            "pipeline": { "const": "gatex_curated_source_v1" },
+            "productionMethod": { "const": "curated_source" },
+            "brand": { "const": "GateX" },
+            "presentationFormat": { "const": "gatex_report_v1" },
+            "publicationState": { "const": "auto_publish_pending" },
+            "humanApprovalRequired": { "const": false },
+            "autoPublish": { "const": true },
+            "autoPublishAfterQuality": { "const": true },
+            "machineQualityGateRequired": { "const": true },
+            "sourceAuthor": { "const": "International Energy Agency" },
+            "sourcePublisher": { "const": "International Energy Agency" },
+            "sourcePublishedAt": { "const": "2025-04-10T00:00:00Z" },
+            "sourceContentHash": {
+              "const": "048e969714029b984b4e0ade0fc0e95fd50efba3c7680cfe5d8482d9bd962741"
+            },
+            "sourceDeletionStatus": { "const": "active" }
+          }
+        }
+      },
+      "required": ["privateDocument"]
+    }
+  ],
   "allOf": [
     {
       "if": {

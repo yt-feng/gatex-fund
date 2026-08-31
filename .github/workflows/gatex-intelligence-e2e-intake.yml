@@ -1,0 +1,27 @@
+name: gatex-intelligence-e2e-intake
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gatex-intelligence-e2e-intake
+  cancel-in-progress: false
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Submit one controlled official-source intake
+        env:
+          PYTHONPATH: src
+          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_INTELLIGENCE_INTAKE_URL: https://gatex.fund/api/integrations/intelligence/intake
+        run: python3 -m intelligence_sources.e2e_intake

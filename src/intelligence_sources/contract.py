@@ -15,6 +15,29 @@ MAX_SOURCE_EXCERPT_CHARS = 180
 MAX_EVIDENCE_EXCERPT_CHARS = 180
 MAX_PRIVATE_DOCUMENT_BYTES = 2_000_000
 PRIVATE_DOCUMENT_MIME_TYPE = "text/plain; charset=utf-8"
+OFFICIAL_REPORT_CHANNEL_KEY = "gatex-e2e-official-source"
+OFFICIAL_REPORT_URL = "https://www.iea.org/reports/energy-and-ai"
+OFFICIAL_REPORT_TITLE = "Energy and AI"
+OFFICIAL_REPORT_PUBLISHED_AT = "2025-04-10T00:00:00Z"
+OFFICIAL_REPORT_PUBLISHER = "International Energy Agency"
+OFFICIAL_REPORT_AUTHOR = "International Energy Agency"
+OFFICIAL_REPORT_COLLECTION_METHOD = "manual_e2e_official_source"
+OFFICIAL_REPORT_NOTE = (
+    "The IEA Energy and AI report estimates data-centre electricity consumption at about "
+    "415 TWh in 2024 and projects about 945 TWh by 2030 in its base case. GateX should "
+    "independently verify the figures and assess grid, supply-chain and investment implications "
+    "for China and Gulf markets."
+)
+OFFICIAL_REPORT_TOPIC_BRIEF = (
+    "Create an original GateX decision-intelligence edition from this official public source "
+    "signal. Independently verify all material facts, explain the implications for China and "
+    "Gulf markets, cite primary sources, use only short quotations, and do not reproduce the "
+    "source report."
+)
+OFFICIAL_REPORT_IDENTITY_HASH = hashlib.sha256(
+    OFFICIAL_REPORT_URL.encode("utf-8")
+).hexdigest()
+OFFICIAL_REPORT_EXTERNAL_ID = f"official:{OFFICIAL_REPORT_IDENTITY_HASH}"
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _WHITESPACE = re.compile(r"\s+")
 _ALLOWED_SOURCE_HOSTS = {"mp.weixin.qq.com"}
@@ -269,6 +292,95 @@ def build_envelope(
     return envelope
 
 
+def build_official_report_e2e_envelope() -> dict[str, Any]:
+    clean_content = _private_text(OFFICIAL_REPORT_NOTE)
+    content_hash = _content_hash(clean_content)
+    idempotency_key = _idempotency_key(
+        OFFICIAL_REPORT_CHANNEL_KEY,
+        OFFICIAL_REPORT_URL,
+        content_hash,
+    )
+    excerpt = _excerpt(clean_content, MAX_SOURCE_EXCERPT_CHARS)
+    envelope = {
+        "schema": INTAKE_SCHEMA,
+        "channelKey": OFFICIAL_REPORT_CHANNEL_KEY,
+        "externalId": OFFICIAL_REPORT_EXTERNAL_ID,
+        "idempotencyKey": idempotency_key,
+        "topic": {
+            "title": f"GateX Perspective: {OFFICIAL_REPORT_TITLE}",
+            "brief": OFFICIAL_REPORT_TOPIC_BRIEF,
+            "industry": "AI infrastructure",
+            "language": "en",
+            "accessScope": "public",
+            "priority": "normal",
+            "provenanceType": "source_channel",
+        },
+        "triggerDraft": True,
+        "sources": [
+            {
+                "kind": "report",
+                "url": OFFICIAL_REPORT_URL,
+                "title": OFFICIAL_REPORT_TITLE,
+                "publisher": OFFICIAL_REPORT_PUBLISHER,
+                "publishedAt": OFFICIAL_REPORT_PUBLISHED_AT,
+                "excerpt": excerpt,
+                "contentHash": content_hash,
+                "status": "accepted",
+                "qualityScore": 0.9,
+                "relevanceScore": 0.9,
+                "metadata": {
+                    "author": OFFICIAL_REPORT_AUTHOR,
+                    "accountDisplayName": OFFICIAL_REPORT_PUBLISHER,
+                    "sourceIdentityHash": OFFICIAL_REPORT_IDENTITY_HASH,
+                    "collectionMethod": OFFICIAL_REPORT_COLLECTION_METHOD,
+                    "attributionRequired": True,
+                    "factCheckRequired": True,
+                    "maxQuoteCharacters": MAX_EVIDENCE_EXCERPT_CHARS,
+                    "reusePolicy": "original_summary_only",
+                    "deletionStatus": "active",
+                    "rightsReviewStatus": "policy_cleared",
+                },
+            }
+        ],
+        "evidence": [
+            {
+                "sourceUrl": OFFICIAL_REPORT_URL,
+                "claimId": f"official-source-note:{OFFICIAL_REPORT_IDENTITY_HASH[:16]}",
+                "excerpt": excerpt,
+                "confidence": 0.8,
+                "status": "accepted",
+                "metadata": {
+                    "quotation": False,
+                    "generationMustVerifyIndependently": True,
+                },
+            }
+        ],
+        "metadata": {
+            "pipeline": "gatex_curated_source_v1",
+            "productionMethod": "curated_source",
+            "brand": "GateX",
+            "presentationFormat": "gatex_report_v1",
+            "publicationState": "auto_publish_pending",
+            "humanApprovalRequired": False,
+            "autoPublish": True,
+            "autoPublishAfterQuality": True,
+            "machineQualityGateRequired": True,
+            "sourceAuthor": OFFICIAL_REPORT_AUTHOR,
+            "sourcePublisher": OFFICIAL_REPORT_PUBLISHER,
+            "sourcePublishedAt": OFFICIAL_REPORT_PUBLISHED_AT,
+            "sourceContentHash": content_hash,
+            "sourceDeletionStatus": "active",
+        },
+        "privateDocument": {
+            "mimeType": PRIVATE_DOCUMENT_MIME_TYPE,
+            "content": clean_content,
+            "sha256": content_hash,
+        },
+    }
+    validate_envelope(envelope)
+    return envelope
+
+
 def validate_envelope(value: Mapping[str, Any]) -> None:
     envelope = _object(value, "intake envelope")
     _exact_fields(envelope, _TOP_LEVEL_FIELDS, "intake envelope")
@@ -323,24 +435,51 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
         },
         "source",
     )
-    if source.get("kind") != "social":
+    source_kind = source.get("kind")
+    if source_kind not in {"social", "report"}:
         raise IntakeContractError("source.kind is invalid")
-    source_url = _source_url(source.get("url"))
-    if source_url != source.get("url"):
-        raise IntakeContractError("source.url is not canonical")
+    official_report = source_kind == "report"
+    if official_report:
+        source_url = _required_string(source.get("url"), "source.url", maximum=2048)
+        if source.get("url") != OFFICIAL_REPORT_URL:
+            raise IntakeContractError("official report URL is invalid")
+    else:
+        source_url = _source_url(source.get("url"))
+        if source_url != source.get("url"):
+            raise IntakeContractError("source.url is not canonical")
     _required_string(source.get("title"), "source.title", maximum=300)
     publisher = _required_string(source.get("publisher"), "source.publisher", maximum=160)
     published_at = _published_at(source.get("publishedAt"))
     if published_at != source.get("publishedAt"):
         raise IntakeContractError("source.publishedAt is not canonical")
+    if official_report and (
+        envelope.get("channelKey") != OFFICIAL_REPORT_CHANNEL_KEY
+        or source.get("title") != OFFICIAL_REPORT_TITLE
+        or source.get("publisher") != OFFICIAL_REPORT_PUBLISHER
+        or published_at != OFFICIAL_REPORT_PUBLISHED_AT
+        or topic.get("title") != f"GateX Perspective: {OFFICIAL_REPORT_TITLE}"
+        or topic.get("brief") != OFFICIAL_REPORT_TOPIC_BRIEF
+        or topic.get("industry") != "AI infrastructure"
+        or topic.get("language") != "en"
+        or topic.get("accessScope") != "public"
+        or topic.get("priority") != "normal"
+    ):
+        raise IntakeContractError("official report identity is invalid")
     excerpt = source.get("excerpt")
     if not isinstance(excerpt, str) or len(excerpt) > MAX_SOURCE_EXCERPT_CHARS:
         raise IntakeContractError("source.excerpt is invalid")
+    if official_report and excerpt != _excerpt(
+        OFFICIAL_REPORT_NOTE,
+        MAX_SOURCE_EXCERPT_CHARS,
+    ):
+        raise IntakeContractError("official report excerpt is invalid")
     content_hash = str(source.get("contentHash") or "")
     if not _SHA256.fullmatch(content_hash):
         raise IntakeContractError("source.contentHash is invalid")
-    _bounded_number(source.get("qualityScore"), "source.qualityScore")
-    _bounded_number(source.get("relevanceScore"), "source.relevanceScore")
+    quality_score = _bounded_number(source.get("qualityScore"), "source.qualityScore")
+    relevance_score = _bounded_number(source.get("relevanceScore"), "source.relevanceScore")
+    if official_report and (quality_score != 0.9 or relevance_score != 0.9):
+        raise IntakeContractError("official report source scores are invalid")
 
     source_metadata = _object(source.get("metadata"), "source.metadata")
     _exact_fields(
@@ -365,7 +504,18 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     identity_hash = _identity_hash(source_url)
     if source_metadata.get("sourceIdentityHash") != identity_hash:
         raise IntakeContractError("source identity hash is invalid")
-    if source_metadata.get("collectionMethod") not in {"sogou_incremental", "tikhub_backfill"}:
+    if official_report:
+        if (
+            source_metadata.get("author") != OFFICIAL_REPORT_AUTHOR
+            or identity_hash != OFFICIAL_REPORT_IDENTITY_HASH
+            or source_metadata.get("collectionMethod")
+            != OFFICIAL_REPORT_COLLECTION_METHOD
+        ):
+            raise IntakeContractError("official report source metadata is invalid")
+    elif source_metadata.get("collectionMethod") not in {
+        "sogou_incremental",
+        "tikhub_backfill",
+    }:
         raise IntakeContractError("source collection method is invalid")
     if source_metadata.get("attributionRequired") is not True:
         raise IntakeContractError("source attribution must be required")
@@ -381,6 +531,8 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     if source_metadata.get("rightsReviewStatus") != "policy_cleared":
         raise IntakeContractError("source rights review status is invalid")
 
+    if official_report and deletion_status != "active":
+        raise IntakeContractError("official report must remain active")
     source_is_active = deletion_status == "active"
     expected_source_status = "accepted" if source_is_active else "withdrawn"
     if source.get("status") != expected_source_status:
@@ -400,6 +552,8 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
         private_content = _private_text(private_document.get("content"))
         if private_content != private_document.get("content"):
             raise IntakeContractError("privateDocument.content is not canonical")
+        if official_report and private_content != OFFICIAL_REPORT_NOTE:
+            raise IntakeContractError("official report source note is invalid")
         private_hash = _content_hash(private_content)
         if private_document.get("sha256") != private_hash or content_hash != private_hash:
             raise IntakeContractError("privateDocument hash does not match source content")
@@ -421,7 +575,15 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     evidence_excerpt = evidence.get("excerpt")
     if not isinstance(evidence_excerpt, str) or len(evidence_excerpt) > MAX_EVIDENCE_EXCERPT_CHARS:
         raise IntakeContractError("evidence excerpt is invalid")
-    _bounded_number(evidence.get("confidence"), "evidence.confidence")
+    confidence = _bounded_number(evidence.get("confidence"), "evidence.confidence")
+    if official_report and (
+        evidence.get("claimId")
+        != f"official-source-note:{OFFICIAL_REPORT_IDENTITY_HASH[:16]}"
+        or evidence_excerpt
+        != _excerpt(OFFICIAL_REPORT_NOTE, MAX_EVIDENCE_EXCERPT_CHARS)
+        or confidence != 0.8
+    ):
+        raise IntakeContractError("official report evidence is invalid")
     expected_evidence_status = "accepted" if source_is_active else "withdrawn"
     if evidence.get("status") != expected_evidence_status:
         raise IntakeContractError("evidence status is inconsistent with source status")
@@ -431,7 +593,8 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
         {"quotation", "generationMustVerifyIndependently"},
         "evidence.metadata",
     )
-    if evidence_metadata.get("quotation") is not True:
+    expected_quotation = not official_report
+    if evidence_metadata.get("quotation") is not expected_quotation:
         raise IntakeContractError("evidence quotation flag is invalid")
     if evidence_metadata.get("generationMustVerifyIndependently") is not True:
         raise IntakeContractError("evidence verification flag is invalid")
@@ -483,7 +646,11 @@ def validate_envelope(value: Mapping[str, Any]) -> None:
     if metadata.get("sourceDeletionStatus") != deletion_status:
         raise IntakeContractError("source deletion metadata does not match")
 
-    external_id = f"wechat:{identity_hash}"
+    external_id = (
+        OFFICIAL_REPORT_EXTERNAL_ID
+        if official_report
+        else f"wechat:{identity_hash}"
+    )
     if envelope.get("externalId") != external_id:
         raise IntakeContractError("externalId is invalid")
     expected_idempotency = _idempotency_key(channel_key, source_url, content_hash)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import contextlib
 import hashlib
 import io
@@ -15,10 +16,22 @@ from intelligence_sources.contract import (
     MAX_EVIDENCE_EXCERPT_CHARS,
     MAX_PRIVATE_DOCUMENT_BYTES,
     MAX_SOURCE_EXCERPT_CHARS,
+    OFFICIAL_REPORT_AUTHOR,
+    OFFICIAL_REPORT_CHANNEL_KEY,
+    OFFICIAL_REPORT_COLLECTION_METHOD,
+    OFFICIAL_REPORT_EXTERNAL_ID,
+    OFFICIAL_REPORT_IDENTITY_HASH,
+    OFFICIAL_REPORT_NOTE,
+    OFFICIAL_REPORT_PUBLISHED_AT,
+    OFFICIAL_REPORT_PUBLISHER,
+    OFFICIAL_REPORT_TITLE,
+    OFFICIAL_REPORT_URL,
     PRIVATE_DOCUMENT_MIME_TYPE,
     IntakeContractError,
     build_envelope,
+    build_official_report_e2e_envelope,
     envelopes_from_batch,
+    validate_envelope,
     write_jsonl,
 )
 from intelligence_sources.delivery import (
@@ -27,6 +40,17 @@ from intelligence_sources.delivery import (
     build_direct_opener,
     deliver_envelopes,
     deliver_file,
+)
+from intelligence_sources.e2e_intake import (
+    INTAKE_ENDPOINT,
+    IntakeInputError as E2EInputError,
+    RejectRedirects as E2ERejectRedirects,
+    build_direct_opener as build_e2e_direct_opener,
+    build_envelope as build_e2e_envelope,
+    main as e2e_main,
+    post_envelope as post_e2e_envelope,
+    validate_delivery_configuration as validate_e2e_delivery_configuration,
+    validate_envelope as validate_e2e_envelope,
 )
 from intelligence_sources.tikhub_backfill import (
     DETAIL_ENDPOINT,
@@ -87,7 +111,7 @@ class ContractTests(unittest.TestCase):
             ["public", "member", "advanced", "staff"],
         )
         source = schema["properties"]["sources"]["items"]["properties"]
-        self.assertEqual(source["kind"]["const"], "social")
+        self.assertEqual(source["kind"]["enum"], ["social", "report"])
         self.assertEqual(source["status"]["enum"], ["accepted", "withdrawn"])
         self.assertEqual(source["excerpt"]["maxLength"], MAX_SOURCE_EXCERPT_CHARS)
         deletion = source["metadata"]["properties"]["deletionStatus"]["enum"]
@@ -106,6 +130,62 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             private_document["properties"]["content"]["maxLength"],
             MAX_PRIVATE_DOCUMENT_BYTES,
+        )
+        branches = {branch["title"]: branch for branch in schema["oneOf"]}
+        social = branches["WeChat social article"]["properties"]
+        official = branches["Controlled IEA official report probe"]["properties"]
+        self.assertEqual(
+            social["sources"]["items"]["properties"]["kind"]["const"],
+            "social",
+        )
+        self.assertEqual(
+            social["sources"]["items"]["properties"]["metadata"]
+            ["properties"]["collectionMethod"]["enum"],
+            ["sogou_incremental", "tikhub_backfill"],
+        )
+        self.assertEqual(
+            social["evidence"]["items"]["properties"]["metadata"]
+            ["properties"]["quotation"]["const"],
+            True,
+        )
+        self.assertEqual(official["channelKey"]["const"], OFFICIAL_REPORT_CHANNEL_KEY)
+        self.assertEqual(official["externalId"]["const"], OFFICIAL_REPORT_EXTERNAL_ID)
+        official_envelope = build_official_report_e2e_envelope()
+        self.assertEqual(
+            official["idempotencyKey"]["const"],
+            official_envelope["idempotencyKey"],
+        )
+        official_source = official["sources"]["items"]["properties"]
+        self.assertEqual(official_source["kind"]["const"], "report")
+        self.assertEqual(official_source["url"]["const"], OFFICIAL_REPORT_URL)
+        self.assertEqual(official_source["title"]["const"], OFFICIAL_REPORT_TITLE)
+        self.assertEqual(
+            official_source["publisher"]["const"],
+            OFFICIAL_REPORT_PUBLISHER,
+        )
+        self.assertEqual(
+            official_source["publishedAt"]["const"],
+            OFFICIAL_REPORT_PUBLISHED_AT,
+        )
+        self.assertEqual(
+            official_source["metadata"]["properties"]["collectionMethod"]["const"],
+            OFFICIAL_REPORT_COLLECTION_METHOD,
+        )
+        self.assertFalse(
+            official["evidence"]["items"]["properties"]["metadata"]
+            ["properties"]["quotation"]["const"]
+        )
+        self.assertEqual(
+            official["privateDocument"]["properties"]["content"]["const"],
+            OFFICIAL_REPORT_NOTE,
+        )
+        self.assertEqual(
+            official["privateDocument"]["properties"]["sha256"]["const"],
+            official_envelope["privateDocument"]["sha256"],
+        )
+        self.assertEqual(
+            official_source["contentHash"]["const"],
+            official_envelope["sources"][0]["contentHash"],
         )
         self.assertFalse(schema["additionalProperties"])
 
@@ -784,6 +864,246 @@ class TikHubBackfillTests(unittest.TestCase):
             self.assertEqual(final_state["offset"], "cursor-2")
             self.assertTrue(final_state["is_end"])
             self.assertEqual(final_state["pending"], [])
+
+
+class _E2EResponse:
+    status = 202
+
+    def __init__(self):
+        self.read_called = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def read(self):
+        self.read_called = True
+        raise AssertionError("response body must not be read")
+
+
+class _E2EOpener:
+    def __init__(self):
+        self.request = None
+        self.timeout = None
+        self.response = _E2EResponse()
+
+    def open(self, request, timeout):
+        self.request = request
+        self.timeout = timeout
+        return self.response
+
+
+class ControlledOfficialReportE2ETests(unittest.TestCase):
+    def test_workflow_is_manual_only_fixed_input_and_has_no_runtime_install(self):
+        workflow = (
+            ROOT / ".github/workflows/gatex-intelligence-e2e-intake.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch: {}", workflow)
+        self.assertNotIn("inputs:", workflow)
+        self.assertNotIn("${{ inputs.", workflow)
+        self.assertNotIn("schedule:", workflow)
+        self.assertNotIn("\n  push:", workflow)
+        self.assertNotIn("\n  pull_request:", workflow)
+        for prohibited in (
+            "playwright",
+            "chromium",
+            "chrome",
+            "xvfb",
+            "pip install",
+            "apt-get",
+        ):
+            self.assertNotIn(prohibited, workflow.lower())
+        self.assertIn("python3 -m intelligence_sources.e2e_intake", workflow)
+
+    def test_workflow_uses_exact_endpoint_and_secret_only_as_environment(self):
+        workflow = (
+            ROOT / ".github/workflows/gatex-intelligence-e2e-intake.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(workflow.count(INTAKE_ENDPOINT), 1)
+        self.assertEqual(
+            workflow.count("secrets.GATEX_INTELLIGENCE_INTAKE_SECRET"),
+            1,
+        )
+        self.assertNotIn("--token", workflow)
+        self.assertNotIn("--secret", workflow)
+        self.assertIn("GATEX_INTELLIGENCE_INTAKE_SECRET:", workflow)
+
+    def test_official_payload_is_fixed_idempotent_and_uses_shared_contract(self):
+        first = build_e2e_envelope()
+        second = build_e2e_envelope()
+        self.assertEqual(first, second)
+        self.assertEqual(first["channelKey"], OFFICIAL_REPORT_CHANNEL_KEY)
+        self.assertEqual(first["externalId"], OFFICIAL_REPORT_EXTERNAL_ID)
+        self.assertEqual(first["topic"]["accessScope"], "public")
+        self.assertTrue(first["triggerDraft"])
+        source = first["sources"][0]
+        self.assertEqual(source["kind"], "report")
+        self.assertEqual(source["url"], OFFICIAL_REPORT_URL)
+        self.assertEqual(source["title"], OFFICIAL_REPORT_TITLE)
+        self.assertEqual(source["publisher"], OFFICIAL_REPORT_PUBLISHER)
+        self.assertEqual(source["publishedAt"], OFFICIAL_REPORT_PUBLISHED_AT)
+        self.assertEqual(source["status"], "accepted")
+        self.assertEqual(source["metadata"]["author"], OFFICIAL_REPORT_AUTHOR)
+        self.assertEqual(
+            source["metadata"]["sourceIdentityHash"],
+            OFFICIAL_REPORT_IDENTITY_HASH,
+        )
+        self.assertEqual(source["metadata"]["deletionStatus"], "active")
+        self.assertEqual(
+            source["metadata"]["rightsReviewStatus"],
+            "policy_cleared",
+        )
+        self.assertFalse(first["evidence"][0]["metadata"]["quotation"])
+        self.assertEqual(first["privateDocument"]["content"], OFFICIAL_REPORT_NOTE)
+        self.assertEqual(first["privateDocument"]["sha256"], source["contentHash"])
+        self.assertEqual(first["metadata"]["sourceContentHash"], source["contentHash"])
+        self.assertTrue(first["metadata"]["autoPublishAfterQuality"])
+        self.assertFalse(first["metadata"]["humanApprovalRequired"])
+
+        with patch(
+            "intelligence_sources.e2e_intake.validate_shared_envelope"
+        ) as shared_validator:
+            validate_e2e_envelope(first)
+        shared_validator.assert_called_once_with(first)
+
+    def test_shared_contract_rejects_every_official_identity_or_policy_spoof(self):
+        mutations = {
+            "host": lambda value: value["sources"][0].__setitem__(
+                "url", "https://example.com/reports/energy-and-ai"
+            ),
+            "url_not_exact": lambda value: value["sources"][0].__setitem__(
+                "url", f" {OFFICIAL_REPORT_URL} "
+            ),
+            "title": lambda value: value["sources"][0].__setitem__(
+                "title", "Energy and AI Updated"
+            ),
+            "title_not_exact": lambda value: value["sources"][0].__setitem__(
+                "title", f" {OFFICIAL_REPORT_TITLE} "
+            ),
+            "date": lambda value: value["sources"][0].__setitem__(
+                "publishedAt", "2025-04-11T00:00:00Z"
+            ),
+            "publisher": lambda value: value["sources"][0].__setitem__(
+                "publisher", "Example Publisher"
+            ),
+            "author": lambda value: value["sources"][0]["metadata"].__setitem__(
+                "author", "Example Author"
+            ),
+            "external_identity": lambda value: value.__setitem__(
+                "externalId", f"official:{'0' * 64}"
+            ),
+            "source_identity": lambda value: value["sources"][0]["metadata"].__setitem__(
+                "sourceIdentityHash", "0" * 64
+            ),
+            "collection_method": lambda value: value["sources"][0]["metadata"].__setitem__(
+                "collectionMethod", "sogou_incremental"
+            ),
+            "rights": lambda value: value["sources"][0]["metadata"].__setitem__(
+                "rightsReviewStatus", "policy_pending"
+            ),
+            "content": lambda value: value["privateDocument"].__setitem__(
+                "content", "Arbitrary source material"
+            ),
+            "auto_publish": lambda value: value["metadata"].__setitem__(
+                "autoPublishAfterQuality", False
+            ),
+        }
+        baseline = build_official_report_e2e_envelope()
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                candidate = copy.deepcopy(baseline)
+                mutate(candidate)
+                with self.assertRaises(IntakeContractError):
+                    validate_envelope(candidate)
+
+    def test_existing_wechat_social_builder_and_validator_are_unchanged(self):
+        value = build_envelope(
+            channel_key="synthetic-channel",
+            title="Synthetic source title",
+            publisher="Synthetic Publisher",
+            author="Synthetic Author",
+            source_url=SOURCE_URL,
+            published_at="2026-08-29T01:02:03Z",
+            content="Synthetic source note.",
+        )
+        validate_envelope(value)
+        self.assertEqual(value["sources"][0]["kind"], "social")
+        self.assertTrue(value["evidence"][0]["metadata"]["quotation"])
+        self.assertTrue(value["externalId"].startswith("wechat:"))
+        self.assertEqual(
+            value["sources"][0]["metadata"]["collectionMethod"],
+            "sogou_incremental",
+        )
+
+    def test_delivery_disables_proxies_rejects_redirects_and_reads_no_body(self):
+        with patch("urllib.request.build_opener") as opener_builder:
+            build_e2e_direct_opener()
+        configured_handlers = opener_builder.call_args.args
+        proxy_handlers = [
+            handler
+            for handler in configured_handlers
+            if isinstance(handler, urllib.request.ProxyHandler)
+        ]
+        self.assertEqual(len(proxy_handlers), 1)
+        self.assertEqual(proxy_handlers[0].proxies, {})
+
+        direct_opener = build_e2e_direct_opener()
+        self.assertTrue(
+            any(
+                isinstance(handler, E2ERejectRedirects)
+                for handler in direct_opener.handlers
+            )
+        )
+
+        fake = _E2EOpener()
+        status = post_e2e_envelope(
+            build_e2e_envelope(),
+            endpoint=INTAKE_ENDPOINT,
+            token="s" * 32,
+            opener=fake,
+        )
+        self.assertEqual(status, 202)
+        self.assertFalse(fake.response.read_called)
+        self.assertEqual(fake.timeout, 30.0)
+        self.assertEqual(fake.request.full_url, INTAKE_ENDPOINT)
+        self.assertEqual(fake.request.method, "POST")
+        sent = json.loads(fake.request.data.decode("utf-8"))
+        self.assertEqual(sent, build_e2e_envelope())
+        self.assertEqual(
+            fake.request.headers["Idempotency-key"],
+            sent["idempotencyKey"],
+        )
+
+    def test_delivery_rejects_every_endpoint_variant(self):
+        validate_e2e_delivery_configuration(endpoint=INTAKE_ENDPOINT, token="s" * 32)
+        for endpoint in (
+            "http://gatex.fund/api/integrations/intelligence/intake",
+            "https://www.gatex.fund/api/integrations/intelligence/intake",
+            "https://gatex.fund/api/integrations/intelligence/intake/",
+            "https://gatex.fund/api/integrations/intelligence/intake?probe=1",
+        ):
+            with self.assertRaises(E2EInputError):
+                validate_e2e_delivery_configuration(endpoint=endpoint, token="s" * 32)
+
+    def test_main_prints_only_status_and_discloses_no_payload_or_secret(self):
+        secret = "private-intake-value-123456789"
+        environment = {
+            "GATEX_INTELLIGENCE_INTAKE_SECRET": secret,
+            "GATEX_INTELLIGENCE_INTAKE_URL": INTAKE_ENDPOINT,
+        }
+        output = io.StringIO()
+        with patch.dict(os.environ, environment, clear=True), patch(
+            "intelligence_sources.e2e_intake.post_envelope",
+            return_value=204,
+        ), contextlib.redirect_stdout(output):
+            result = e2e_main()
+            self.assertNotIn("GATEX_INTELLIGENCE_INTAKE_SECRET", os.environ)
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), "GateX intake HTTP status: 204\n")
+        self.assertNotIn(secret, output.getvalue())
+        self.assertNotIn(OFFICIAL_REPORT_NOTE, output.getvalue())
 
 
 if __name__ == "__main__":
