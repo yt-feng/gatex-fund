@@ -221,12 +221,12 @@
     {
       "title": "Controlled IEA official report probe",
       "properties": {
-        "channelKey": { "const": "gatex-e2e-official-source-v2" },
+        "channelKey": { "const": "gatex-e2e-official-source-v3" },
         "externalId": {
           "const": "official:5fe6e9b46dceb04398d64047fbe9e26e883dd2472c122b8aa0674883e7be385d"
         },
         "idempotencyKey": {
-          "const": "a8f4a3029e36c529e1964121e97282f3412bc6b26175b57daff3df8eb2ab1130"
+          "const": "5588e630078f9972c29531a1f13deb23037c2960aea473a2f94a9d15eabb1d04"
         },
         "triggerDraft": { "const": true },
         "topic": {

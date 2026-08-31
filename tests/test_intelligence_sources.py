@@ -149,7 +149,7 @@ class ContractTests(unittest.TestCase):
             True,
         )
         self.assertEqual(official["channelKey"]["const"], OFFICIAL_REPORT_CHANNEL_KEY)
-        self.assertEqual(OFFICIAL_REPORT_CHANNEL_KEY, "gatex-e2e-official-source-v2")
+        self.assertEqual(OFFICIAL_REPORT_CHANNEL_KEY, "gatex-e2e-official-source-v3")
         self.assertEqual(official["externalId"]["const"], OFFICIAL_REPORT_EXTERNAL_ID)
         official_envelope = build_official_report_e2e_envelope()
         self.assertEqual(
@@ -158,7 +158,7 @@ class ContractTests(unittest.TestCase):
         )
         self.assertEqual(
             official_envelope["idempotencyKey"],
-            "a8f4a3029e36c529e1964121e97282f3412bc6b26175b57daff3df8eb2ab1130",
+            "5588e630078f9972c29531a1f13deb23037c2960aea473a2f94a9d15eabb1d04",
         )
         official_source = official["sources"]["items"]["properties"]
         self.assertEqual(official_source["kind"]["const"], "report")
@@ -940,10 +940,10 @@ class ControlledOfficialReportE2ETests(unittest.TestCase):
         second = build_e2e_envelope()
         self.assertEqual(first, second)
         self.assertEqual(first["channelKey"], OFFICIAL_REPORT_CHANNEL_KEY)
-        self.assertEqual(first["channelKey"], "gatex-e2e-official-source-v2")
+        self.assertEqual(first["channelKey"], "gatex-e2e-official-source-v3")
         self.assertEqual(
             first["idempotencyKey"],
-            "a8f4a3029e36c529e1964121e97282f3412bc6b26175b57daff3df8eb2ab1130",
+            "5588e630078f9972c29531a1f13deb23037c2960aea473a2f94a9d15eabb1d04",
         )
         self.assertNotEqual(
             first["idempotencyKey"],
