@@ -24,6 +24,13 @@ workflow. Its daily schedule is gated by the `ENABLE_SNAPSHOT` repository
 variable and remains disabled when that variable is absent. A separate CI
 workflow performs synthetic offline tests on every source change.
 
+An additional encrypted profile may run through the pinned
+`secondary-snapshot` workflow. It uses a separate checkpoint and vault, runs
+in archive-only mode, and shares the same non-cancelling concurrency group as
+the primary snapshot so encrypted state updates are serialized. Its schedule
+is independently gated by the `ENABLE_SECONDARY_SNAPSHOT` repository variable;
+manual dispatch remains available from the default branch.
+
 The optional GateX Intelligence source adapters are documented in
 [`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).
 They use separate sealed profiles and cursors from the existing snapshot

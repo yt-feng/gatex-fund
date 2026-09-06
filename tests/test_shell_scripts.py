@@ -32,11 +32,33 @@ class ShellScriptTests(unittest.TestCase):
         self.assertIn('kill -KILL -- "-$egress_pid"', runner)
 
     def test_browser_runtime_is_pinned_and_runs_under_xvfb(self):
-        workflow = (ROOT / ".github/workflows/scheduled-snapshot.yml").read_text(encoding="utf-8")
+        workflows = [
+            (ROOT / ".github/workflows/scheduled-snapshot.yml").read_text(encoding="utf-8"),
+            (ROOT / ".github/workflows/secondary-snapshot.yml").read_text(encoding="utf-8"),
+        ]
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"playwright==1.62.0"', project)
-        self.assertIn("python3 -m playwright install --with-deps chromium", workflow)
-        self.assertIn("xvfb-run -a bash scripts/run_scheduled.sh", workflow)
+        for workflow in workflows:
+            self.assertIn("python3 -m playwright install --with-deps chromium", workflow)
+            self.assertIn("xvfb-run -a bash scripts/run_scheduled.sh", workflow)
+
+    def test_secondary_snapshot_is_archive_only_and_serialized(self):
+        workflow = (
+            ROOT / ".github/workflows/secondary-snapshot.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("ENABLE_SECONDARY_SNAPSHOT", workflow)
+        self.assertIn("group: scheduled-source-state-main", workflow)
+        self.assertIn(
+            "SNAPSHOT_PROFILE_ROOT: sealed/archive-sources/source-b",
+            workflow,
+        )
+        self.assertIn("SNAPSHOT_VAULT_DIR: vault-secondary/source-b", workflow)
+        self.assertIn('SNAPSHOT_INTAKE_MODE: "off"', workflow)
+        self.assertNotIn("GATEX_INTELLIGENCE_INTAKE_SECRET", workflow)
 
     def test_intelligence_workflows_default_to_dry_run_and_backfill_is_manual(self):
         incremental = (
