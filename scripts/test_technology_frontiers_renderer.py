@@ -30,7 +30,7 @@ class RendererTests(unittest.TestCase):
             ['Cannot be changed', "Value trap: Even though you are right, you don't get paid.", 'Go with the consensus, but what you earn is a discount from "underestimated persistence."']]
         self.assertEqual(renderer.comparison_table_cells(blocks, 1), expected)
         self.assertTrue(expected[2][1].startswith('Value trap'))
-        self.assertTrue(expected[2][2].startswith('Persistence'))
+        self.assertIn('underestimated persistence', expected[2][2])
         items = renderer.story(edition(blocks))
         tables = [item for item in items if isinstance(item, Table)]
         self.assertEqual(len(tables), 1)
