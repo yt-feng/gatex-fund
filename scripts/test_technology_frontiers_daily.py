@@ -8,6 +8,12 @@ spec = importlib.util.spec_from_file_location('daily', Path(__file__).with_name(
 daily = importlib.util.module_from_spec(spec); spec.loader.exec_module(daily)
 
 class DailyEditionTests(unittest.TestCase):
+    def test_cover_prompt_prefers_metaphoric_objects_without_people(self):
+        prompt = daily.cover_prompt({'artDirection': 'A path through changing systems'})
+        self.assertIn('No people, faces, heads, hands, human silhouettes, portraits, or human figures.', prompt)
+        self.assertIn('Prefer objects, architecture, landscapes, instruments, machines', prompt)
+        self.assertIn('No text, typography, letters, numbers, logos', prompt)
+
     def test_document_identity_does_not_invent_signature(self):
         source = daily.source_from_metadata({'title':'Sample','source':'Example','published_at':'2026-09-12',
             'document_identity':{'__biz':'sample-biz','mid':'123','idx':'1'}}, 'first\n\nlast')

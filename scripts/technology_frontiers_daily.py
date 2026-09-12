@@ -294,6 +294,16 @@ def review_translation(source, draft):
     api('/sources/' + source['id'] + '/progress', {'translation': result})
     return result
 
+def cover_prompt(translation):
+    return ('Bespoke premium editorial illustration for GateX Technology Frontiers. Portrait 2:3 composition. '
+        'Upper 55 percent completely quiet deep midnight navy (#081D38), reserved for native title typography. '
+        'Place a sophisticated, tangible, visually memorable article-specific sculptural scene entirely in lower 45 percent. '
+        'Refined materials, coherent dramatic studio lighting, blue/cyan with restrained warm accents. '
+        'No people, faces, heads, hands, human silhouettes, portraits, or human figures. Prefer objects, architecture, '
+        'landscapes, instruments, machines, material studies and abstract systems as visual metaphors. '
+        'No text, typography, letters, numbers, logos, watermarks, arrows, charts, glossy stock-photo scenes, or toy-like UI icons. '
+        'No generic AI brain or humanoid robot. Editorial concept: ' + translation['artDirection'].strip()).strip()
+
 def generated_art(source, translation, directory):
     from PIL import Image
     task = (source.get('progress') or {}).get('coverTask')
@@ -301,12 +311,7 @@ def generated_art(source, translation, directory):
     art_base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
     if art_base.endswith('/v1'): art_base = art_base[:-3]
     if not task:
-        prompt = ('Bespoke premium editorial illustration for GateX Technology Frontiers. Portrait 2:3 composition. '
-            'Upper 55 percent completely quiet deep midnight navy (#081D38), reserved for native title typography. '
-            'Place a sophisticated, tangible, visually memorable article-specific sculptural scene entirely in lower 45 percent. '
-            'Refined materials, coherent dramatic studio lighting, blue/cyan with restrained warm accents. '
-            'No text, typography, letters, numbers, logos, watermarks, arrows or charts. No generic AI brain or humanoid robot. '
-            'Editorial concept: ' + translation['artDirection'].strip()).strip()
+        prompt = cover_prompt(translation)
         response = request_json(art_base + '/v1/images/generations', token,
             {'model': ART_MODEL, 'prompt': prompt, 'n': 1, 'size': '2:3', 'resolution': '1k'})
         data = response.get('data'); data = data[0] if isinstance(data, list) else data

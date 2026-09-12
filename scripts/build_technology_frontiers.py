@@ -94,7 +94,7 @@ DISCLAIMER_PARAGRAPHS = [
     ('Purpose and scope', 'This publication is provided by GateX for general information and discussion. It is not personal investment, financial, legal, tax, accounting or other professional advice, an investment recommendation, or an offer, solicitation or commitment to buy, sell or underwrite any security, financial instrument, product or service. It does not take account of any reader\'s objectives, financial position, experience, jurisdiction or particular circumstances. Readers should obtain independent professional advice and conduct their own assessment before making decisions.'),
     ('Information, interpretation and timeliness', 'The material reflects the information, opinions and circumstances available to its original author at the stated publication date. Facts, quotations, estimates, descriptions of businesses and market data may be incomplete, disputed, subsequently corrected or out of date. GateX has not independently audited every source, statement or calculation. Reasonable care in translation and presentation does not constitute a warranty of accuracy, completeness, fitness for a particular purpose or continued availability. Differences in language and context may affect interpretation; the original source should be consulted where precision is material. GateX has no general obligation to update this edition or notify readers of later developments.'),
     ('Views, forecasts and illustrations', 'Views expressed belong to the identified authors and quoted speakers and do not necessarily represent GateX, its affiliates, staff or partners. Publication does not imply endorsement of any issuer, product, technology or opinion. Forward-looking statements, forecasts, scenarios, examples and estimates involve assumptions and uncertainty; actual outcomes may differ materially. Past performance, historical relationships and modelled or hypothetical results do not predict future results. References to returns, prices or growth do not constitute a guarantee. Investments may lose value, including the full amount invested; liquidity, currency, leverage, counterparty, market, operational and regulatory conditions can change.'),
-    ('Sources, rights and third-party material', 'This edition contains authorized translated source material and is presented with source and editorial notes in the article. Third-party names, marks, quotations, links and data remain attributable to their respective owners. Links are provided for reference and do not imply control over or approval of an external site. Illustrations are editorial visualizations and should not be treated as evidence, actual facilities or representations of a named organization. Permission for this edition does not grant readers a license to reproduce, redistribute, resell, train models on or commercially exploit protected material beyond applicable law or express permission from the relevant rights holder.'),
+    ('Sources, rights and third-party material', 'Third-party names, marks, quotations, links and data remain attributable to their respective owners. Illustrations are editorial visualizations and should not be treated as evidence, actual facilities or representations of a named organization. Permission for this edition does not grant readers a license to reproduce, redistribute, resell, train models on or commercially exploit protected material beyond applicable law or express permission from the relevant rights holder.'),
     ('Use and responsibility', 'Readers remain responsible for how they interpret and use this publication and for compliance with laws and restrictions applicable to them. To the extent permitted by applicable law, GateX and its affiliates do not accept liability for losses arising from reliance on the material or from errors, omissions, service interruptions or third-party content. Nothing in this notice excludes or limits duties or liabilities that cannot lawfully be excluded or limited, and no statement should be read as restricting a reader\'s mandatory statutory rights. Questions, correction requests and rights inquiries may be sent to info@gatex.fund.'),
 ]
 
@@ -150,32 +150,20 @@ def comparison_table(cells):
     ]))
     return table
 
-def source_note_after(blocks, table_indices):
-    candidates = [index for index, block in enumerate(blocks)
-        if index not in table_indices and block.get('type') == 'paragraph'
-        and len(block.get('text', '').strip()) >= 100
-        and not block.get('text', '').rstrip().endswith((':', '\uFF1A'))]
-    if not candidates: return None
-    midpoint = (len(blocks) - 1) / 2
-    return min(candidates, key=lambda index: (abs(index - midpoint), index))
-
-def source_note(edition):
-    text = (f"Source and edition note: {edition['sourceName']}, {edition['sourceDate']}. "
-        'GateX provides the authorized English translation and editorial presentation. '
-        'The original argument, examples and qualifications are preserved; the views remain those of the source author.')
-    if 'agentic' in edition['id']:
-        text += ' The publisher\'s commentary frames a reproduced essay by Junyang Lin; these are distinct authorial contributions.'
-    if edition.get('sourceUrl'):
-        text += ' Original publication: ' + edition['sourceUrl']
-    return [Spacer(1, 5), Paragraph(escape(plain(text)), STYLES['note'])]
+def disclaimer_paragraphs(edition):
+    source_name = plain(str(edition.get('sourceName') or 'the named source publication'))
+    source_date = plain(str(edition.get('sourceDate') or 'the stated publication date'))
+    attribution = (f'This edition is an authorized English translation of material published by {source_name} '
+        f'on {source_date}, prepared and presented by GateX.')
+    return [*DISCLAIMER_PARAGRAPHS[:3],
+        ('Sources, rights and third-party material', attribution + ' ' + DISCLAIMER_PARAGRAPHS[3][1]),
+        DISCLAIMER_PARAGRAPHS[4]]
 
 def story(edition):
     items = [Spacer(1, 1), PageBreak()]
     blocks = edition['blocks']
     tables = {index: cells for index in range(1, len(blocks))
         if (cells := comparison_table_cells(blocks, index)) is not None}
-    table_indices = {index + offset for index in tables for offset in range(3)}
-    note_at = source_note_after(blocks, table_indices)
     index = 0
     while index < len(blocks):
         block = blocks[index]
@@ -189,12 +177,9 @@ def story(edition):
             text = escape(plain(block['text'])).replace('\n', '<br/>')
             if block['type'] == 'bullet': text = '- ' + text
             items.append(Paragraph(text, STYLES[block['type']]))
-        if index == note_at:
-            items.extend(source_note(edition))
         index += 1
-    if note_at is None: items.extend(source_note(edition))
     items.extend([PageBreak(), Paragraph('DISCLAIMER & IMPORTANT INFORMATION', STYLES['heading'])])
-    for title, body in DISCLAIMER_PARAGRAPHS:
+    for title, body in disclaimer_paragraphs(edition):
         items.append(Paragraph('<b>' + escape(title) + '.</b> ' + escape(plain(body)), STYLES['disclaimer']))
     return items
 
@@ -240,7 +225,7 @@ def build(edition):
     assert edition['sourceName'] not in cover and 'translation' not in cover.lower()
     final_text = reader.pages[-1].extract_text() or ''
     assert 'DISCLAIMER & IMPORTANT INFORMATION' in final_text, 'Disclaimer must occupy one separate final page'
-    assert all(title in final_text for title, _ in DISCLAIMER_PARAGRAPHS), 'Disclaimer is incomplete'
+    assert all(title in final_text for title, _ in disclaimer_paragraphs(edition)), 'Disclaimer is incomplete'
     assert 'DISCLAIMER & IMPORTANT INFORMATION' not in (reader.pages[-2].extract_text() or '')
     stamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     record = {

@@ -14,7 +14,8 @@ def paragraph(text, first, last=None, kind='paragraph'):
     return {'type': kind, 'text': text, 'sourceLines': [first, last or first]}
 
 def edition(blocks):
-    return {'id': 'renderer-fixture', 'sourceName': 'Unsolved Problems', 'sourceDate': '12 September 2026', 'blocks': blocks}
+    return {'id': 'renderer-fixture', 'sourceName': 'Unsolved Problems', 'sourceDate': '12 September 2026',
+        'sourceUrl': 'https://mp.weixin.qq.com/s?__biz=private&mid=123&idx=1', 'blocks': blocks}
 
 class RendererTests(unittest.TestCase):
     def comparison(self):
@@ -76,25 +77,26 @@ class RendererTests(unittest.TestCase):
                 for block in blocks:
                     self.assertIn(renderer.plain(block['text']), texts)
 
-    def test_source_note_does_not_interrupt_an_intro_and_its_list(self):
+    def test_source_is_removed_from_body_and_kept_briefly_in_disclaimer(self):
         long_text = 'This substantive paragraph develops the original argument, preserving its evidence, context and qualifications for the reader.'
         blocks = [paragraph(long_text, 1), paragraph('A section heading', 2, kind='heading'),
             paragraph(long_text + ' The discussion continues.', 3), paragraph('Three key points:', 4),
             paragraph('First point.', 5, kind='bullet'), paragraph('Second point.', 6, kind='bullet'),
             paragraph('Third point.', 7, kind='bullet'), paragraph(long_text + ' A concluding observation.', 8)]
         texts = [item.getPlainText() for item in renderer.story(edition(blocks)) if isinstance(item, Paragraph)]
-        note_index = next(index for index, value in enumerate(texts) if value.startswith('Source and edition note:'))
+        self.assertFalse(any(value.startswith('Source and edition note:') for value in texts))
+        self.assertTrue(any('This edition is an authorized English translation of material published by Unsolved Problems on 12 September 2026, prepared and presented by GateX.' in value for value in texts))
+        self.assertNotIn('https://mp.weixin.qq.com', ' '.join(texts))
         intro_index = texts.index('Three key points:')
-        self.assertEqual(note_index + 1, intro_index)
         self.assertEqual(texts[intro_index + 1:intro_index + 4], ['- First point.', '- Second point.', '- Third point.'])
 
-    def test_short_article_places_note_after_body_without_splitting_table(self):
+    def test_short_article_keeps_disclaimer_after_body_without_splitting_table(self):
         blocks = self.comparison()
         items = renderer.story(edition(blocks))
         table_index = next(index for index, value in enumerate(items) if isinstance(value, Table))
-        note_index = next(index for index, value in enumerate(items) if isinstance(value, Paragraph)
-            and value.getPlainText().startswith('Source and edition note:'))
-        self.assertGreater(note_index, table_index)
-        self.assertEqual(sum(isinstance(value, Paragraph) and value.getPlainText().startswith('Source and edition note:') for value in items), 1)
+        disclaimer_index = next(index for index, value in enumerate(items) if isinstance(value, Paragraph)
+            and value.getPlainText() == 'DISCLAIMER & IMPORTANT INFORMATION')
+        self.assertGreater(disclaimer_index, table_index)
+        self.assertFalse(any(isinstance(value, Paragraph) and value.getPlainText().startswith('Source and edition note:') for value in items))
 
 if __name__ == '__main__': unittest.main()
