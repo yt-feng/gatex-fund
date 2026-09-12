@@ -35,6 +35,7 @@ def service_failure(error):
             payload = json.loads(error.read(8192))
             if payload.get('error') == 'Intelligence intake credentials are not valid.': scope = 'queue-auth'
         except (ValueError, TypeError): pass
+    error.close()
     return ServiceFailure(error.code, scope)
 
 def request_json(url, token, payload=None, method=None, timeout=150):
