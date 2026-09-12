@@ -44,6 +44,21 @@ class DailyEditionTests(unittest.TestCase):
         self.assertEqual(len(result['blocks']),2)
         self.assertEqual(api.call_count,2)
 
+    def test_new_source_after_failed_lexical_page_is_not_starved(self):
+        pages = [{'sources':[{'id':'aaa-old-failed','publishedAt':'2026-08-01'}], 'cursor':'opaque/next'},
+                 {'sources':[{'id':'zzz-new','publishedAt':'2026-09-12'}]}]
+        with tempfile.TemporaryDirectory() as temp, patch.object(daily,'api',side_effect=pages) as api, patch.object(daily,'produce') as produce:
+            self.assertEqual(daily.publish_pending(1, Path(temp)), 1)
+        self.assertEqual(api.call_count, 2)
+        self.assertIn('cursor=opaque%2Fnext', api.call_args_list[1].args[0])
+        self.assertEqual(produce.call_args.args[0]['id'],'zzz-new')
+
+    def test_failure_does_not_prevent_later_success(self):
+        rows=[{'id':'new-failed','publishedAt':'2026-09-12'}, {'id':'old-valid','publishedAt':'2026-09-11'}]
+        with tempfile.TemporaryDirectory() as temp, patch.object(daily,'api',return_value={'sources':rows}), patch.object(daily,'produce',side_effect=[RuntimeError('test'), {}]) as produce:
+            with self.assertRaises(RuntimeError): daily.publish_pending(2,Path(temp))
+        self.assertEqual(produce.call_count,2)
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))

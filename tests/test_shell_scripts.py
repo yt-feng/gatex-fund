@@ -111,6 +111,12 @@ class ShellScriptTests(unittest.TestCase):
             backfill.index("intelligence_sources.cli deliver"),
         )
 
+    def test_delivery_secret_is_wiped_after_all_authorized_consumers(self):
+        runner = (ROOT / "scripts/run_scheduled.sh").read_text(encoding="utf-8")
+        self.assertLess(runner.index("intelligence_sources.cli deliver"), runner.index('intake_secret=""'))
+        self.assertLess(runner.index('technology_frontiers_daily.py" enqueue'), runner.index('intake_secret=""'))
+        self.assertLess(runner.index('intake_secret=""'), runner.index('if [[ "$state_changed" == "1" ]]'))
+
     def test_post_configuration_is_checked_before_a_zero_new_collection(self):
         runner = (ROOT / "scripts/run_scheduled.sh").read_text(encoding="utf-8")
         backfill = (ROOT / "scripts/run_intelligence_backfill.sh").read_text(encoding="utf-8")

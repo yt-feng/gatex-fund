@@ -170,7 +170,6 @@ if [[ "$new_count" -gt 0 && "$intake_mode" != "off" ]]; then
     --input "$work_dir/intake.jsonl" \
     --mode "$intake_mode" \
     --endpoint "${GATEX_INTELLIGENCE_INTAKE_URL:-}"
-  intake_secret=""
 fi
 
 if [[ "$intake_mode" == "dry-run" ]]; then
@@ -185,6 +184,8 @@ if [[ "$new_count" -gt 0 && "${ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION:-false}" 
     python3 "$repo_root/scripts/technology_frontiers_daily.py" enqueue \
       --batch "$work_dir/run/batch"
 fi
+
+intake_secret=""
 
 if [[ "$state_changed" == "1" ]]; then
   "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" -o "$work_dir/checkpoint.json.age" "$work_dir/state.next.json"

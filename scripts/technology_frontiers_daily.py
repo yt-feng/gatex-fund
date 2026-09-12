@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse, hashlib, io, json, os, re, subprocess, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlsplit, quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -103,6 +103,7 @@ def validate_blocks(blocks, total, start=1):
         if not isinstance(bounds, list) or len(bounds) != 2 or any(type(i) is not int for i in bounds):
             raise ValueError('Invalid source line map')
         if bounds[0] < start or bounds[1] < bounds[0]: raise ValueError('Invalid source range')
+        if block['type'] == 'divider': block.setdefault('text', '')
         if block['type'] != 'divider' and not str(block.get('text', '')).strip(): raise ValueError('Translation is empty')
         if re.search(r'[\u3400-\u9fff]', block.get('text', '')): raise ValueError('Untranslated body text remains')
         coverage.extend(range(bounds[0], bounds[1] + 1))
@@ -241,6 +242,43 @@ def produce(source, runtime):
     result = upload_edition(metadata, pdf, cover)
     return {'id': source['id'], 'pages': len(reader.pages), 'status': result.get('status', 'published')}
 
+def publish_pending(limit, runtime):
+    global CURRENT_STAGE
+    CURRENT_STAGE = 'pending-queue'
+    queue_dir = runtime / 'pending'; queue_dir.mkdir(parents=True, exist_ok=True)
+    records, seen_ids, seen_cursors = [], set(), set()
+    cursor = None
+    # Snapshot pages before publication removes pending markers. Spool full bodies
+    # privately, then prioritize new publications so failed older jobs cannot
+    # pin the first lexical queue page forever.
+    while True:
+        response = api('/pending?limit=10' + ('&cursor=' + quote(cursor, safe='') if cursor else ''))
+        for source in response.get('sources', []):
+            if not re.fullmatch(r'[a-z0-9-]{1,120}', source['id']): raise ValueError('Invalid queued edition identity')
+            if source['id'] in seen_ids: continue
+            seen_ids.add(source['id'])
+            if len(records) >= 1000: raise RuntimeError('Pending queue exceeds scan limit')
+            path = queue_dir / (source['id'] + '.json'); path.write_text(json.dumps(source))
+            records.append((source['publishedAt'], source['id'], path))
+        cursor = response.get('cursor')
+        if not cursor: break
+        if cursor in seen_cursors: raise RuntimeError('Pending cursor did not advance')
+        seen_cursors.add(cursor)
+    records.sort(reverse=True)
+    count, failures = 0, []
+    for _, _, path in records[:max(20, limit * 4)]:
+        source = json.loads(path.read_text())
+        try:
+            produce(source, runtime); count += 1
+            print('stage=edition status=published id=' + source['id'], flush=True)
+            if count >= limit: break
+        except Exception as error:
+            failures.append(type(error).__name__)
+            print('stage=edition status=failed id=' + source['id'] + ' phase=' + CURRENT_STAGE +
+                ' error_type=' + type(error).__name__ + failure_status(error), file=sys.stderr, flush=True)
+    if failures: raise RuntimeError('One or more editions remain pending')
+    return count
+
 def main():
     global CURRENT_STAGE
     parser = argparse.ArgumentParser()
@@ -253,18 +291,7 @@ def main():
         count = enqueue_batch(args.batch)
     else:
         runtime = Path(args.runtime); runtime.mkdir(parents=True, exist_ok=True)
-        CURRENT_STAGE = 'pending-queue'
-        records = api('/pending?limit=' + str(min(max(args.limit, 1), 10))).get('sources', [])
-        count = 0
-        failures = []
-        for source in records:
-            try:
-                produce(source, runtime); count += 1
-                print('stage=edition status=published id=' + source['id'], flush=True)
-            except Exception as error:
-                failures.append(type(error).__name__)
-                print('stage=edition status=failed id=' + source['id'] + ' phase=' + CURRENT_STAGE + ' error_type=' + type(error).__name__ + failure_status(error), file=sys.stderr, flush=True)
-        if failures: raise RuntimeError('One or more editions remain pending')
+        count = publish_pending(min(max(args.limit, 1), 10), runtime)
     print('stage=technology-frontiers status=ok count=' + str(count))
 
 def failure_status(error):
