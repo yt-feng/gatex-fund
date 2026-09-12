@@ -15,6 +15,7 @@ SCHEMA = 'gatex-technology-source/v1'
 BASE = 'https://gatex.fund/api/integrations/technology-frontiers'
 MODEL = os.environ.get('GATEX_TRANSLATION_MODEL', 'gpt-4o-mini')
 ART_MODEL = 'gpt-image-2'
+CURRENT_STAGE = 'startup'
 ALLOWED_TYPES = {'paragraph', 'heading', 'subheading', 'bullet', 'note', 'divider'}
 
 def digest(value: bytes | str) -> str:
@@ -207,10 +208,14 @@ def upload_edition(metadata, pdf, cover):
     return result
 
 def produce(source, runtime):
+    global CURRENT_STAGE
+    CURRENT_STAGE = 'translation'
     from pypdf import PdfReader
     translation = translate(source)
     directory = runtime / source['id']; art_dir = directory / 'covers'; art_dir.mkdir(parents=True, exist_ok=True)
+    CURRENT_STAGE = 'cover'
     art = generated_art(source, translation, art_dir)
+    CURRENT_STAGE = 'pdf'
     edition = {**translation, 'id': source['id'], 'sourceName': 'Unsolved Problems',
         'sourceDate': datetime.fromisoformat(source['publishedAt'][:10]).strftime('%d %B %Y').lstrip('0'),
         'publishedAt': source['publishedAt'][:10], 'sourceUrl': source.get('sourceUrl', ''), 'archive': source['id'] + '.txt'}
@@ -232,19 +237,23 @@ def produce(source, runtime):
         'language': 'English', 'sourceSha256': source.get('sourceSha256') or digest('\n'.join(source['lines'])),
         'sourceLineCount': len(source['lines']), 'blocks': translation['blocks'], 'coverGeneration': art,
         'revision': renderer.REVISION, 'pageCount': len(reader.pages), 'coverStyle': 'artwork'}
+    CURRENT_STAGE = 'publication'
     result = upload_edition(metadata, pdf, cover)
     return {'id': source['id'], 'pages': len(reader.pages), 'status': result.get('status', 'published')}
 
 def main():
+    global CURRENT_STAGE
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
     queue = sub.add_parser('enqueue'); queue.add_argument('--batch', required=True)
     publish = sub.add_parser('publish'); publish.add_argument('--limit', type=int, default=5); publish.add_argument('--runtime', required=True)
     args = parser.parse_args()
     if args.command == 'enqueue':
+        CURRENT_STAGE = 'source-queue'
         count = enqueue_batch(args.batch)
     else:
         runtime = Path(args.runtime); runtime.mkdir(parents=True, exist_ok=True)
+        CURRENT_STAGE = 'pending-queue'
         records = api('/pending?limit=' + str(min(max(args.limit, 1), 10))).get('sources', [])
         count = 0
         failures = []
@@ -254,12 +263,16 @@ def main():
                 print('stage=edition status=published id=' + source['id'], flush=True)
             except Exception as error:
                 failures.append(type(error).__name__)
-                print('stage=edition status=failed id=' + source['id'] + ' error_type=' + type(error).__name__, file=sys.stderr, flush=True)
+                print('stage=edition status=failed id=' + source['id'] + ' phase=' + CURRENT_STAGE + ' error_type=' + type(error).__name__ + failure_status(error), file=sys.stderr, flush=True)
         if failures: raise RuntimeError('One or more editions remain pending')
     print('stage=technology-frontiers status=ok count=' + str(count))
+
+def failure_status(error):
+    match = re.fullmatch(r'(?:Service|Publication) returned HTTP ([1-5][0-9]{2})', str(error)) if isinstance(error, RuntimeError) else None
+    return ' http_status=' + match[1] if match else ''
 
 if __name__ == '__main__':
     try: main()
     except Exception as error:
-        print('stage=technology-frontiers status=failed error_type=' + type(error).__name__, file=sys.stderr)
+        print('stage=technology-frontiers status=failed phase=' + CURRENT_STAGE + ' error_type=' + type(error).__name__ + failure_status(error), file=sys.stderr)
         raise SystemExit(1)
