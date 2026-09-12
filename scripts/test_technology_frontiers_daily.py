@@ -98,6 +98,28 @@ class DailyEditionTests(unittest.TestCase):
             self.assertEqual(daily.model_call('Return JSON',{'example':True}),{'ok':True})
         self.assertIs(request.call_args.args[2]['stream'],False)
 
+    def test_publisher_label_is_canonical_only_after_approved_identity_match(self):
+        with patch.dict(daily.os.environ, {'GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256':daily.digest('approved')}):
+            source=daily.source_from_metadata({'title':'Example','source':'source-a','published_at':'2026-09-12','document_identity':{'__biz':'approved','mid':'123','idx':'1'}},'body')
+        self.assertEqual(source['sourceName'],'Unsolved Problems')
+
+    def test_documented_data_wrapper_is_supported(self):
+        self.assertEqual(daily.parse_model_json({'data':{'choices':[{'message':{'content':'{"ok":true}'},'finish_reason':'stop'}]}}),{'ok':True})
+
+    def test_ornamental_separator_is_preserved_but_text_cannot_become_divider(self):
+        block={'type':'divider','sourceLines':[1,1],'text':''}
+        self.assertEqual(daily.validate_blocks([block],1,source_lines=['\u2014\u2014'])[0]['text'],'--')
+        self.assertEqual(block['type'],'note')
+        with self.assertRaises(ValueError): daily.validate_blocks([{'type':'divider','sourceLines':[1,1],'text':''}],1,source_lines=['Meaningful source text'])
+
+    def test_invalid_structure_retries_identical_source_lines(self):
+        with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'quote','sourceLines':[1,1],'text':'Body'}]},
+            {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]},
+            {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}):
+            result=daily.translate({'id':'sample','title':'Title','lines':['source']})
+        self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
+        self.assertEqual(len(result['blocks']),1)
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))
