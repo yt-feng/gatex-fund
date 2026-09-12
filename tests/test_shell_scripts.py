@@ -121,6 +121,7 @@ class ShellScriptTests(unittest.TestCase):
     def test_complete_editions_use_a_separate_secret_hidden_from_collector(self):
         runner = (ROOT / "scripts/run_scheduled.sh").read_text(encoding="utf-8")
         self.assertIn('GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret"', runner)
+        self.assertIn("env -u ALL_PROXY -u HTTPS_PROXY -u HTTP_PROXY", runner)
         self.assertLess(runner.index('unset GATEX_TECHNOLOGY_PUBLICATION_SECRET'), runner.index('snapshot_pipeline.cli run'))
         self.assertLess(runner.index('technology_frontiers_daily.py" enqueue'), runner.index('frontier_secret=""'))
         publisher = (ROOT / '.github/workflows/technology-frontiers-daily.yml').read_text()

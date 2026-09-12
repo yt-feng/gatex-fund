@@ -182,7 +182,10 @@ fi
 # Queue authorized complete editions independently from the generic intake job.
 # A failed durable enqueue leaves the source checkpoint untouched for replay.
 if [[ "$new_count" -gt 0 && "${ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION:-false}" == "true" ]]; then
-  GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret" \
+  # The egress proxy is for the source collector. GateX's publication API is
+  # a first-party endpoint and must not inherit that proxy's routing.
+  env -u ALL_PROXY -u HTTPS_PROXY -u HTTP_PROXY -u all_proxy -u https_proxy -u http_proxy \
+    GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret" \
     python3 "$repo_root/scripts/technology_frontiers_daily.py" enqueue \
       --batch "$work_dir/run/batch"
 fi
