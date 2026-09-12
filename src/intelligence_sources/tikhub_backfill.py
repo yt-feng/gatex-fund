@@ -24,6 +24,7 @@ _ENDPOINTS = {PROFILE_ENDPOINT, ARTICLES_ENDPOINT, DETAIL_ENDPOINT}
 _API_HOSTS = {"api.tikhub.io", "api.tikhub.dev"}
 _USERNAME = re.compile(r"^gh_[A-Za-z0-9_]{3,61}$")
 _WHITESPACE = re.compile(r"\s+")
+_TECHNOLOGY_BIZ = "Mzg3NzUxNDU0NA=="
 
 
 class BackfillError(RuntimeError):
@@ -396,3 +397,191 @@ def run_backfill_page(
     )
     atomic_write_json(state_out, next_state)
     return len(envelopes)
+
+
+def _first_digit(value: Any, maximum: int) -> str:
+    """Return a bounded numeric identity value without exposing provider data."""
+    text = str(value or "").strip()
+    if not text.isdigit() or len(text) > maximum:
+        return ""
+    return text
+
+
+def _technology_identity(content: Mapping[str, Any], candidate: BackfillCandidate) -> dict[str, str]:
+    """Build the stable WeChat identity required by the private edition queue.
+
+    TikHub can return either a signed article URL or a detail payload with the
+    numeric message identity.  The approved publisher identity is sealed in
+    the GateX Worker, so the collector uses that public allowlisted biz value
+    and only accepts numeric mid/idx values from the preserved article.
+    """
+    urls = [
+        str(content.get(key) or "").strip()
+        for key in ("content_url", "url", "source_url", "link")
+    ] + [candidate.source_url]
+    query_values: dict[str, str] = {}
+    for raw in urls:
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            continue
+        for key in ("__biz", "mid", "idx"):
+            value = parsed.query and next(
+                (part.split("=", 1)[1] for part in parsed.query.split("&") if part.startswith(key + "=")),
+                "",
+            )
+            if value and key not in query_values:
+                query_values[key] = value
+    mid = ""
+    for key in ("mid", "appmsgid", "app_msg_id", "msgid", "message_id"):
+        mid = _first_digit(content.get(key), 20)
+        if mid:
+            break
+    mid = mid or _first_digit(query_values.get("mid"), 20)
+    idx = ""
+    for key in ("idx", "item_idx", "item_index", "appmsg_index"):
+        idx = _first_digit(content.get(key), 3)
+        if idx:
+            break
+    idx = idx or _first_digit(query_values.get("idx"), 3) or "1"
+    if not mid or not (1 <= int(idx) <= 999):
+        raise BackfillError("article document identity is unavailable")
+    return {"__biz": _TECHNOLOGY_BIZ, "mid": mid, "idx": idx}
+
+
+def _technology_source_from_detail(
+    payload: Mapping[str, Any],
+    *,
+    intake_config: Mapping[str, Any],
+    username: str,
+    candidate: BackfillCandidate,
+) -> dict[str, Any]:
+    content = _detail_content(payload)
+    if content.get("user_name") != username:
+        raise BackfillError("TikHub article identity did not match the sealed profile")
+    expected_publisher = _required_text(intake_config.get("publisher"), "publisher", 160)
+    publisher = _required_text(content.get("nick_name"), "article publisher", 160)
+    if publisher.casefold() != expected_publisher.casefold():
+        raise BackfillError("TikHub article publisher did not match the sealed profile")
+    expected_alias = str(intake_config.get("wechat_alias") or "").strip()
+    if expected_alias and str(content.get("alias") or "").strip() != expected_alias:
+        raise BackfillError("TikHub article alias did not match the sealed profile")
+    article_text = content.get("content_text")
+    if not isinstance(article_text, str) or not article_text.strip():
+        raise BackfillError("article content is invalid")
+    article_text = article_text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    lines = article_text.split("\n")
+    if not any(line.strip() for line in lines) or len(lines) > 2000:
+        raise BackfillError("article content is invalid")
+    if any(len(line) > 100000 for line in lines):
+        raise BackfillError("article content is invalid")
+    title = _required_text(content.get("title") or candidate.title, "article title", 500)
+    published = content.get("create_timestamp") or content.get("ori_create_time")
+    if not published:
+        published = content.get("create_time") or candidate.published_at
+    if isinstance(published, str) and not published.isdigit():
+        try:
+            published = datetime.fromisoformat(published).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            published = candidate.published_at
+    if isinstance(published, (int, float)) or (isinstance(published, str) and published.isdigit()):
+        published = datetime.fromtimestamp(int(published), tz=timezone.utc).isoformat()
+    published_date = str(published)[:10]
+    try:
+        datetime.fromisoformat(published_date)
+    except ValueError as error:
+        raise BackfillError("article publication time is invalid") from error
+    source_url = next(
+        (str(content.get(key) or "").strip() for key in ("content_url", "url", "source_url", "link") if str(content.get(key) or "").strip()),
+        candidate.source_url,
+    )
+    return {
+        "schema": "gatex-technology-source/v1",
+        "documentIdentity": _technology_identity(content, candidate),
+        "sourceName": "Unsolved Problems",
+        "sourceUrl": source_url,
+        "title": title,
+        "publishedAt": published_date,
+        "lines": lines,
+    }
+
+
+def run_technology_backfill_page(
+    *,
+    config_path: Path,
+    state_path: Path,
+    state_out: Path,
+    output_path: Path,
+    token: str,
+    maximum_items: int,
+    base_url: str = "https://api.tikhub.io",
+    transport: TikHubTransport | None = None,
+) -> int:
+    """Prepare a resumable page of complete Unsolved Problems source records."""
+    config = load_json(config_path)
+    state = load_json(state_path)
+    intake = config.get("intelligence_intake") if isinstance(config, dict) else None
+    if not isinstance(intake, dict) or intake.get("enabled") is not True:
+        raise BackfillError("sealed source profile is disabled")
+    username = str(intake.get("tikhub_username") or "").strip()
+    if not _USERNAME.fullmatch(username):
+        raise BackfillError("verified TikHub username is unavailable")
+    if intake.get("verification_status") != "verified":
+        raise BackfillError("source identity is not verified")
+    expected_publisher = _required_text(intake.get("publisher"), "publisher", 160)
+    if not isinstance(state, dict):
+        raise BackfillError("backfill state is invalid")
+    limit = max(1, min(int(maximum_items), 50))
+    active = transport or TikHubTransport(token, base_url=base_url, max_calls=limit + 3)
+    verify_profile(active, username, expected_publisher)
+
+    offset = str(state.get("offset") or "")
+    is_end = bool(state.get("is_end"))
+    pending = _state_candidates(state.get("pending"))
+    next_offset = str(state.get("pending_next_offset") or offset)
+    page_is_end = bool(state.get("pending_is_end", is_end))
+    if not pending and not is_end:
+        pending, next_offset, page_is_end = fetch_page(
+            active, username=username, offset=offset, page_size=min(limit, 20)
+        )
+    seen_raw = state.get("seen") or []
+    if not isinstance(seen_raw, list) or not all(isinstance(item, str) for item in seen_raw):
+        raise BackfillError("backfill seen state is invalid")
+    seen = set(seen_raw)
+    eligible = [item for item in pending if item.identity_hash not in seen]
+    selected = eligible[:limit]
+    sources = [
+        _technology_source_from_detail(
+            fetch_detail(active, candidate),
+            intake_config=intake,
+            username=username,
+            candidate=candidate,
+        )
+        for candidate in selected
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        for source in sources:
+            handle.write(json.dumps(source, ensure_ascii=False, separators=(",", ":")) + "\n")
+    processed = {item.identity_hash for item in selected}
+    seen.update(processed)
+    remaining = [item for item in pending if item.identity_hash not in seen]
+    next_state = dict(state)
+    next_state.update(
+        {
+            "version": 1,
+            "offset": next_offset if not remaining else offset,
+            "is_end": bool(page_is_end and not remaining),
+            "pending": [item.as_dict() for item in remaining],
+            "pending_next_offset": next_offset if remaining else "",
+            "pending_is_end": page_is_end if remaining else False,
+            "seen": sorted(seen),
+            "last_run": {
+                "status": "technology-ready",
+                "prepared_count": len(sources),
+                "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            },
+        }
+    )
+    atomic_write_json(state_out, next_state)
+    return len(sources)

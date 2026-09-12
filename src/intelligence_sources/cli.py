@@ -14,7 +14,12 @@ from .delivery import (
     deliver_file,
     validate_delivery_configuration,
 )
-from .tikhub_backfill import TikHubTransport, run_backfill_page, verify_profile
+from .tikhub_backfill import (
+    TikHubTransport,
+    run_backfill_page,
+    run_technology_backfill_page,
+    verify_profile,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -44,6 +49,14 @@ def _parser() -> argparse.ArgumentParser:
     backfill.add_argument("--output", type=Path, required=True)
     backfill.add_argument("--maximum-items", type=int, default=10)
     backfill.add_argument("--base-url", default="https://api.tikhub.io")
+
+    technology_backfill = subparsers.add_parser("technology-backfill-page")
+    technology_backfill.add_argument("--config", type=Path, required=True)
+    technology_backfill.add_argument("--state", type=Path, required=True)
+    technology_backfill.add_argument("--state-out", type=Path, required=True)
+    technology_backfill.add_argument("--output", type=Path, required=True)
+    technology_backfill.add_argument("--maximum-items", type=int, default=10)
+    technology_backfill.add_argument("--base-url", default="https://api.tikhub.io")
 
     profile = subparsers.add_parser("verify-profile")
     profile.add_argument("--config", type=Path, required=True)
@@ -112,6 +125,19 @@ def main(argv: list[str] | None = None) -> int:
                 base_url=args.base_url,
             )
             print(f"stage=backfill status=ok count={count}")
+            return 0
+        if args.command == "technology-backfill-page":
+            token = os.environ.pop("TIKHUB_WECHAT_TOKEN", "")
+            count = run_technology_backfill_page(
+                config_path=args.config,
+                state_path=args.state,
+                state_out=args.state_out,
+                output_path=args.output,
+                token=token,
+                maximum_items=args.maximum_items,
+                base_url=args.base_url,
+            )
+            print(f"stage=technology-backfill status=ok count={count}")
             return 0
         if args.command == "verify-profile":
             value = load_json(args.config)

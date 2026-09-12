@@ -98,6 +98,29 @@ def enqueue_batch(batch_root):
         count += 1
     return count
 
+
+def enqueue_sources_file(input_path):
+    """Durably enqueue source records prepared by the historical collector."""
+    path = Path(input_path).resolve()
+    count = 0
+    with path.open(encoding='utf-8') as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                source = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError('Historical source record is not valid JSON') from error
+            if not isinstance(source, dict):
+                raise ValueError('Historical source record must be an object')
+            if source.get('schema') != SCHEMA or source.get('sourceName') != 'Unsolved Problems':
+                raise ValueError('Historical source record is not an approved Technology Frontiers source')
+            result = api('/sources', source)
+            if not result.get('ok'):
+                raise RuntimeError('Source was not durably accepted')
+            count += 1
+    return count
+
 def parse_model_json(response):
     if not isinstance(response, dict): raise ValueError('Model response must be an object')
     if isinstance(response.get('data'), dict): response = response['data']
@@ -391,11 +414,15 @@ def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
     queue = sub.add_parser('enqueue'); queue.add_argument('--batch', required=True)
+    historical = sub.add_parser('enqueue-jsonl'); historical.add_argument('--input', required=True)
     publish = sub.add_parser('publish'); publish.add_argument('--limit', type=int, default=5); publish.add_argument('--runtime', required=True)
     args = parser.parse_args()
     if args.command == 'enqueue':
         CURRENT_STAGE = 'source-queue'
         count = enqueue_batch(args.batch)
+    elif args.command == 'enqueue-jsonl':
+        CURRENT_STAGE = 'source-queue'
+        count = enqueue_sources_file(args.input)
     else:
         runtime = Path(args.runtime); runtime.mkdir(parents=True, exist_ok=True)
         count = publish_pending(min(max(args.limit, 1), 10), runtime)

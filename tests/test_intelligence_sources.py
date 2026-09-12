@@ -61,6 +61,7 @@ from intelligence_sources.tikhub_backfill import (
     envelope_from_detail,
     fetch_page,
     run_backfill_page,
+    run_technology_backfill_page,
     verify_profile,
 )
 
@@ -603,6 +604,84 @@ class DeliveryTests(unittest.TestCase):
 
 
 class TikHubBackfillTests(unittest.TestCase):
+    def test_technology_detail_preserves_full_source_and_stable_identity(self):
+        candidate = BackfillCandidate(
+            title="Synthetic technology history item",
+            source_url="https://mp.weixin.qq.com/s?src=11&timestamp=1&signature=x",
+            digest="Synthetic digest.",
+            published_at=1780000001,
+        )
+        detail = {
+            "data": {
+                "content": {
+                    "user_name": "gh_synthetic123",
+                    "nick_name": "Synthetic Publisher",
+                    "alias": "synthetic_alias",
+                    "title": candidate.title,
+                    "content_text": "First passage\n\nSecond passage",
+                    "content_url": candidate.source_url,
+                    "mid": "2247485001",
+                    "idx": 1,
+                    "create_timestamp": 1780000001,
+                }
+            }
+        }
+        from intelligence_sources.tikhub_backfill import _technology_source_from_detail
+
+        source = _technology_source_from_detail(
+            detail,
+            intake_config=intake_config(),
+            username="gh_synthetic123",
+            candidate=candidate,
+        )
+        self.assertEqual(source["sourceName"], "Unsolved Problems")
+        self.assertEqual(source["documentIdentity"]["__biz"], "Mzg3NzUxNDU0NA==")
+        self.assertEqual(source["documentIdentity"]["mid"], "2247485001")
+        self.assertEqual(source["lines"], ["First passage", "", "Second passage"])
+
+    def test_technology_backfill_writes_resumable_source_page(self):
+        candidate = BackfillCandidate(
+            title="Synthetic technology history item",
+            source_url=SOURCE_URL.replace("http://", "https://"),
+            digest="Synthetic digest.",
+            published_at=1780000001,
+        )
+
+        class Transport:
+            def post(self, endpoint, body):
+                if endpoint == PROFILE_ENDPOINT:
+                    return {"code": 200, "data": {"user_name": "gh_synthetic123", "nick_name": "Synthetic Publisher"}}
+                if endpoint != DETAIL_ENDPOINT:
+                    raise AssertionError(f"unexpected endpoint: {endpoint}")
+                return {"code": 200, "data": {"content": {
+                    "user_name": "gh_synthetic123", "nick_name": "Synthetic Publisher",
+                    "alias": "synthetic_alias", "title": candidate.title,
+                    "content_text": "Full first line\nFull second line", "mid": "100", "idx": 1,
+                    "create_timestamp": candidate.published_at,
+                }}}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "config.json").write_text(json.dumps({"intelligence_intake": intake_config()}), encoding="utf-8")
+            (root / "state.json").write_text(json.dumps({
+                "version": 1, "offset": "cursor-1", "is_end": False,
+                "pending": [candidate.as_dict()], "pending_next_offset": "cursor-2",
+                "pending_is_end": True, "seen": [],
+            }), encoding="utf-8")
+            count = run_technology_backfill_page(
+                config_path=root / "config.json", state_path=root / "state.json",
+                state_out=root / "state.next.json", output_path=root / "sources.jsonl",
+                token="synthetic-token-value-1234567890", maximum_items=1, transport=Transport(),
+            )
+            self.assertEqual(count, 1)
+            source = json.loads((root / "sources.jsonl").read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(source["schema"], "gatex-technology-source/v1")
+            self.assertEqual(source["documentIdentity"]["mid"], "100")
+            state = json.loads((root / "state.next.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["offset"], "cursor-2")
+            self.assertTrue(state["is_end"])
+            self.assertEqual(state["pending"], [])
+
     def test_profile_requires_exact_username_and_display_name(self):
         requests = []
 

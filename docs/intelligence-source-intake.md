@@ -104,6 +104,13 @@ checkpoint, so the same source can be replayed safely. Intelligence failure
 diagnostics contain only a sealed generic summary; they never package the full
 runner capture.
 
+Technology Frontiers historical editions use
+`.github/workflows/technology-frontiers-historical-backfill.yml`. This separate
+daily cursor verifies the same source-a identity, fetches complete article text,
+converts it to the Technology Frontiers source contract, and posts it to the
+dedicated edition queue before advancing its encrypted cursor. It does not alter
+the generic intelligence intake cursor or its report-generation semantics.
+
 ## Activation checklist
 
 1. Deploy the GateX intake endpoint and its database migration.

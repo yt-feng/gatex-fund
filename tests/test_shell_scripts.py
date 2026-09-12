@@ -14,6 +14,7 @@ class ShellScriptTests(unittest.TestCase):
             "run_scheduled.sh",
             "run_intelligence_backfill.sh",
             "run_intelligence_profile_preflight.sh",
+            "run_technology_backfill.sh",
         ):
             with self.subTest(name=name):
                 result = subprocess.run(
@@ -141,6 +142,18 @@ class ShellScriptTests(unittest.TestCase):
             backfill.index("intelligence_sources.cli check-delivery"),
             backfill.index("intelligence_sources.cli backfill-page"),
         )
+
+    def test_technology_historical_backfill_is_scheduled_and_uses_edition_queue(self):
+        workflow = (ROOT / ".github/workflows/technology-frontiers-historical-backfill.yml").read_text(encoding="utf-8")
+        runner = (ROOT / "scripts/run_technology_backfill.sh").read_text(encoding="utf-8")
+        self.assertIn("schedule:", workflow)
+        self.assertIn("ENABLE_TECHNOLOGY_FRONTIERS_HISTORICAL_BACKFILL", workflow)
+        self.assertIn("TIKHUB_WECHAT_TOKEN", workflow)
+        self.assertIn("GATEX_TECHNOLOGY_PUBLICATION_SECRET", workflow)
+        self.assertIn("technology-backfill-page", runner)
+        self.assertIn("enqueue-jsonl", runner)
+        self.assertIn("technology-backfill-checkpoint.json.age", runner)
+        self.assertIn("group: scheduled-source-state-main", workflow)
 
 
 if __name__ == "__main__":

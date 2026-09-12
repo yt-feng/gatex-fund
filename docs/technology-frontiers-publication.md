@@ -11,9 +11,20 @@ unchanged, so a subsequent archive run can replay it idempotently. The enabled
 publication workflow runs after a successful primary snapshot and at 04:15 UTC
 every day. It also supports manual runs with a bounded edition count.
 
+Historical editions use the separate
+`.github/workflows/technology-frontiers-historical-backfill.yml` workflow. It
+starts from the sealed `source-a` TikHub identity, fetches a bounded page of
+complete article bodies, queues each source through the same Technology
+Frontiers endpoint, and advances an encrypted cursor only after every queue
+operation succeeds. The workflow runs daily at 03:30 UTC so the 04:15 UTC
+publisher can translate and render the queued page. A failed page is replayed
+with the same identity and content; no article is marked seen before the queue
+has durably accepted it. Manual `dry-run` is available for collector checks.
+
 Configure these repository variables after the Worker endpoints are deployed:
 
 - `ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION=true`
+- `ENABLE_TECHNOLOGY_FRONTIERS_HISTORICAL_BACKFILL=true`
 - `GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256`: SHA-256 of the approved publisher identity.
 - `GATEX_TRANSLATION_MODEL`: optional text model, default `gpt-4o-mini`.
 
@@ -34,13 +45,21 @@ invalid cover or unreadable PDF prevents publication. An unfinished image task
 is reused by the next run. Completed reports are published only after the PDF
 and cover are stored and verified; replay preserves the first publication time.
 
+The historical backfill additionally requires the existing sealed runtime
+identity and a `TIKHUB_WECHAT_TOKEN` repository secret authorized for the
+verified source-a profile, article-list, and article-detail endpoints. Without
+that secret the historical workflow remains fail-closed; new scheduled snapshots
+and already queued editions continue to use their own credentials.
+
 The PDF uses native typography, the full translated body, one editorial/source
 note inside the body and a detailed standalone final disclaimer page. Its cover
 art is text-free so the website can render accessible, responsive native titles.
 A disclaimer states the scope of the publication and does not override mandatory
 law or imply that every possible liability is excluded.
 
-The daily run processes at most five pending editions by default. A valid empty
+The daily run processes at most five pending editions by default. Historical
+backfill prepares up to twenty source records per day by default and is
+resumable until the sealed article-list cursor reaches the end. A valid empty
 queue reports zero; it does not generate filler or repeatedly reissue old articles.
 Failures remain pending, fail the Action visibly, and do not prevent other queued
 editions in that run from completing. This workflow does not perform subscriber

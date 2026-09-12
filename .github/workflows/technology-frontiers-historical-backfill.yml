@@ -1,0 +1,57 @@
+name: technology-frontiers-historical-backfill
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      maximum_items:
+        description: Maximum historical articles prepared in this resumable page
+        required: true
+        default: "20"
+        type: string
+      mode:
+        description: Validate only or enqueue sources in the GateX edition queue
+        required: true
+        default: post
+        type: choice
+        options:
+          - dry-run
+          - post
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scheduled-source-state-main
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    if: ${{ vars.ENABLE_TECHNOLOGY_FRONTIERS_HISTORICAL_BACKFILL == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install runtime
+        run: python3 -m pip install --disable-pip-version-check .
+      - name: Collect and enqueue a historical page
+        env:
+          RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
+          TIKHUB_WECHAT_TOKEN: ${{ secrets.TIKHUB_WECHAT_TOKEN }}
+          GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}
+          TECHNOLOGY_BACKFILL_MAXIMUM_ITEMS: ${{ inputs.maximum_items || '20' }}
+          TECHNOLOGY_BACKFILL_MODE: ${{ inputs.mode || 'post' }}
+          TIKHUB_API_BASE: https://api.tikhub.io
+        run: bash scripts/run_technology_backfill.sh
+      - name: Remove private working files
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/technology-backfill."*
