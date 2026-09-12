@@ -34,7 +34,8 @@ class RendererTests(unittest.TestCase):
         items = renderer.story(edition(blocks))
         tables = [item for item in items if isinstance(item, Table)]
         self.assertEqual(len(tables), 1)
-        self.assertEqual([[cell.getPlainText() for cell in row] for row in tables[0]._cellvalues], expected)
+        self.assertEqual([[cell.getPlainText() for cell in row] for row in tables[0]._cellvalues],
+            [[renderer.plain(cell) for cell in row] for row in expected])
         self.assertEqual(blocks, before)
         width, height = tables[0].wrap(renderer.W - 96, renderer.H - 129)
         self.assertAlmostEqual(width, renderer.W - 96)
