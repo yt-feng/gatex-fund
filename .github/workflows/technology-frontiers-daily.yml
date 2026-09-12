@@ -46,7 +46,7 @@ jobs:
         run: python3 scripts/test_technology_frontiers_daily.py
       - name: Translate, render and publish complete editions
         env:
-          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}
           GATEX_MODEL_CREDENTIAL: ${{ secrets.APIMART_API_KEY }}
           GATEX_TRANSLATION_MODEL: ${{ vars.GATEX_TRANSLATION_MODEL || 'gpt-4o-mini' }}
           EDITION_LIMIT: ${{ inputs.limit || '5' }}

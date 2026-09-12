@@ -41,7 +41,7 @@ jobs:
           EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
           ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION: ${{ vars.ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION }}
           GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256: ${{ vars.GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256 }}
-          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}
         run: xvfb-run -a bash scripts/run_scheduled.sh
       - name: Upload sealed diagnostic
         if: ${{ failure() }}

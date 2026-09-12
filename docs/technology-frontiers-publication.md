@@ -17,8 +17,11 @@ Configure these repository variables after the Worker endpoints are deployed:
 - `GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256`: SHA-256 of the approved publisher identity.
 - `GATEX_TRANSLATION_MODEL`: optional text model, default `gpt-4o-mini`.
 
-The workflow uses the existing `GATEX_INTELLIGENCE_INTAKE_SECRET` and the
-`APIMART_API_KEY` repository secret. It does not require storage-admin credentials.
+The workflow uses the dedicated `GATEX_TECHNOLOGY_PUBLICATION_SECRET` and the
+`APIMART_API_KEY` repository secrets. The Worker keeps only the SHA-256 hash of
+the dedicated publication credential. Generic intake retains its existing secret
+and configuration. The local Python adapter supports the old intake credential
+as a fallback for compatibility. It does not require storage-admin credentials.
 Its service path is `/api/integrations/technology-frontiers` on the GateX site.
 
 The queue keeps ordered source lines, translated-block progress and independent

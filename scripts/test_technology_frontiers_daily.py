@@ -74,6 +74,11 @@ class DailyEditionTests(unittest.TestCase):
         self.assertEqual(daily.failure_status(daily.service_failure(auth)),' http_status=403 failure_scope=queue-auth')
         self.assertEqual(daily.failure_status(daily.service_failure(edge)),' http_status=403 failure_scope=edge')
 
+    def test_dedicated_credential_takes_precedence_over_legacy_intake(self):
+        with patch.dict(daily.os.environ, {'GATEX_TECHNOLOGY_PUBLICATION_SECRET':' dedicated-fixture ', 'GATEX_INTELLIGENCE_INTAKE_SECRET':'legacy-fixture'}), patch.object(daily,'request_json',return_value={'ok':True}) as request:
+            daily.api('/pending')
+        self.assertEqual(request.call_args.args[1], 'dedicated-fixture')
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))

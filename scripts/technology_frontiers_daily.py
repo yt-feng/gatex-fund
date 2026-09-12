@@ -50,7 +50,7 @@ def request_json(url, token, payload=None, method=None, timeout=150):
         raise service_failure(error) from None
 
 def api(path, payload=None, method=None):
-    token = os.environ.get('GATEX_INTELLIGENCE_INTAKE_SECRET', '')
+    token = (os.environ.get('GATEX_TECHNOLOGY_PUBLICATION_SECRET') or os.environ.get('GATEX_INTELLIGENCE_INTAKE_SECRET', '')).strip()
     if not token: raise RuntimeError('Edition queue credential unavailable')
     return request_json(BASE + path, token, payload, method)
 
@@ -217,7 +217,7 @@ def upload_edition(metadata, pdf, cover):
         parts.append((header + f'\r\nContent-Type: {ctype}\r\n\r\n').encode() + content + b'\r\n')
     payload = b''.join(parts) + ('--'+boundary+'--\r\n').encode()
     req = Request(BASE + '/publish', payload, method='POST', headers={
-        'Authorization': 'Bearer ' + os.environ['GATEX_INTELLIGENCE_INTAKE_SECRET'],
+        'Authorization': 'Bearer ' + (os.environ.get('GATEX_TECHNOLOGY_PUBLICATION_SECRET') or os.environ.get('GATEX_INTELLIGENCE_INTAKE_SECRET', '')).strip(),
         'Content-Type': 'multipart/form-data; boundary=' + boundary})
     try:
         with urlopen(req, timeout=150) as response: result = json.load(response)

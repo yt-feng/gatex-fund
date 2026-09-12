@@ -13,6 +13,8 @@ vault_relative="${SNAPSHOT_VAULT_DIR:-vault}"
 intake_mode="${SNAPSHOT_INTAKE_MODE:-off}"
 intake_secret="${GATEX_INTELLIGENCE_INTAKE_SECRET-}"
 unset GATEX_INTELLIGENCE_INTAKE_SECRET
+frontier_secret="${GATEX_TECHNOLOGY_PUBLICATION_SECRET:-$intake_secret}"
+unset GATEX_TECHNOLOGY_PUBLICATION_SECRET
 
 if [[ "$profile_root_value" = /* ]]; then
   profile_root="$profile_root_value"
@@ -180,12 +182,13 @@ fi
 # Queue authorized complete editions independently from the generic intake job.
 # A failed durable enqueue leaves the source checkpoint untouched for replay.
 if [[ "$new_count" -gt 0 && "${ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION:-false}" == "true" ]]; then
-  GATEX_INTELLIGENCE_INTAKE_SECRET="$intake_secret" \
+  GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret" \
     python3 "$repo_root/scripts/technology_frontiers_daily.py" enqueue \
       --batch "$work_dir/run/batch"
 fi
 
 intake_secret=""
+frontier_secret=""
 
 if [[ "$state_changed" == "1" ]]; then
   "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" -o "$work_dir/checkpoint.json.age" "$work_dir/state.next.json"

@@ -117,6 +117,15 @@ class ShellScriptTests(unittest.TestCase):
         self.assertLess(runner.index('technology_frontiers_daily.py" enqueue'), runner.index('intake_secret=""'))
         self.assertLess(runner.index('intake_secret=""'), runner.index('if [[ "$state_changed" == "1" ]]'))
 
+    def test_complete_editions_use_a_separate_secret_hidden_from_collector(self):
+        runner = (ROOT / "scripts/run_scheduled.sh").read_text(encoding="utf-8")
+        self.assertIn('GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret"', runner)
+        self.assertLess(runner.index('unset GATEX_TECHNOLOGY_PUBLICATION_SECRET'), runner.index('snapshot_pipeline.cli run'))
+        self.assertLess(runner.index('technology_frontiers_daily.py" enqueue'), runner.index('frontier_secret=""'))
+        publisher = (ROOT / '.github/workflows/technology-frontiers-daily.yml').read_text()
+        self.assertIn('secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET', publisher)
+        self.assertNotIn('secrets.GATEX_INTELLIGENCE_INTAKE_SECRET', publisher)
+
     def test_post_configuration_is_checked_before_a_zero_new_collection(self):
         runner = (ROOT / "scripts/run_scheduled.sh").read_text(encoding="utf-8")
         backfill = (ROOT / "scripts/run_intelligence_backfill.sh").read_text(encoding="utf-8")
