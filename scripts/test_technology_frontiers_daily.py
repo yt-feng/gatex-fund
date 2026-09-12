@@ -79,6 +79,20 @@ class DailyEditionTests(unittest.TestCase):
             daily.api('/pending')
         self.assertEqual(request.call_args.args[1], 'dedicated-fixture')
 
+    def test_machine_requests_identify_the_publisher_and_accept_json(self):
+        from unittest.mock import MagicMock
+        response=MagicMock(); response.__enter__.return_value.read.return_value=b'{"ok":true}'
+        with patch.object(daily,'urlopen',return_value=response) as request:
+            self.assertTrue(daily.request_json('https://example.test','fixture')['ok'])
+        headers=request.call_args.args[0]
+        self.assertEqual(headers.get_header('User-agent'),daily.CLIENT_NAME)
+        self.assertEqual(headers.get_header('Accept'),'application/json')
+
+    def test_plain_cloudflare_code_is_classified_without_body_disclosure(self):
+        import io
+        error=daily.HTTPError('https://example.test',403,'Denied',{'content-type':'text/plain','server':'cloudflare'},io.BytesIO(b'error code: 1010'))
+        self.assertEqual(daily.failure_status(daily.service_failure(error)),' http_status=403 failure_scope=edge edge_code=1010')
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))

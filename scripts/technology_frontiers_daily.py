@@ -16,32 +16,39 @@ BASE = 'https://gatex.fund/api/integrations/technology-frontiers'
 MODEL = os.environ.get('GATEX_TRANSLATION_MODEL', 'gpt-4o-mini')
 ART_MODEL = 'gpt-image-2'
 CURRENT_STAGE = 'startup'
+CLIENT_NAME = 'GateX-Research-Publisher/1.0 (+https://gatex.fund)'
 ALLOWED_TYPES = {'paragraph', 'heading', 'subheading', 'bullet', 'note', 'divider'}
 
 def digest(value: bytes | str) -> str:
     return hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()
 
 class ServiceFailure(RuntimeError):
-    def __init__(self, status, scope):
+    def __init__(self, status, scope, edge_code=None):
         super().__init__('Service returned HTTP ' + str(status))
-        self.status, self.scope = status, scope
+        self.status, self.scope, self.edge_code = status, scope, edge_code
 
 def service_failure(error):
-    scope = 'service'
+    scope, edge_code = 'service', None
     content_type = error.headers.get('content-type', '').lower()
-    if 'text/html' in content_type: scope = 'edge'
-    elif 'application/json' in content_type:
-        try:
-            payload = json.loads(error.read(8192))
-            if payload.get('error') == 'Intelligence intake credentials are not valid.': scope = 'queue-auth'
-        except (ValueError, TypeError): pass
-    error.close()
-    return ServiceFailure(error.code, scope)
+    try:
+        body = error.read(8192)
+        if 'application/json' in content_type:
+            try:
+                payload = json.loads(body)
+                if payload.get('error') == 'Intelligence intake credentials are not valid.': scope = 'queue-auth'
+            except (ValueError, TypeError, AttributeError): pass
+        else:
+            if 'text/html' in content_type or error.headers.get('server', '').lower() == 'cloudflare': scope = 'edge'
+            code = re.search(rb'(?i)error\s+code\s*:\s*(10[0-9]{2})', body)
+            if code: scope, edge_code = 'edge', code[1].decode()
+    finally: error.close()
+    return ServiceFailure(error.code, scope, edge_code)
 
 def request_json(url, token, payload=None, method=None, timeout=150):
     body = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
     req = Request(url, data=body, method=method or ('POST' if body else 'GET'),
-        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json',
+            'Accept': 'application/json', 'User-Agent': CLIENT_NAME})
     try:
         with urlopen(req, timeout=timeout) as response:
             data = response.read(4 * 1024 * 1024 + 1)
@@ -200,7 +207,7 @@ def generated_art(source, translation, directory):
     image_url = result['result']['images'][0]['url']
     if isinstance(image_url, list): image_url = image_url[0]
     if not image_url.startswith('https://'): raise ValueError('Invalid generated asset URL')
-    with urlopen(image_url, timeout=60) as response: blob = response.read(16*1024*1024+1)
+    with urlopen(Request(image_url, headers={'User-Agent': CLIENT_NAME, 'Accept': 'image/*'}), timeout=60) as response: blob = response.read(16*1024*1024+1)
     if not 8000 < len(blob) <= 16*1024*1024: raise ValueError('Cover image is outside size limits')
     image = Image.open(io.BytesIO(blob)).convert('RGB')
     if image.width < 600 or image.height < 900: raise ValueError('Cover resolution is too small')
@@ -219,7 +226,7 @@ def upload_edition(metadata, pdf, cover):
     payload = b''.join(parts) + ('--'+boundary+'--\r\n').encode()
     req = Request(BASE + '/publish', payload, method='POST', headers={
         'Authorization': 'Bearer ' + (os.environ.get('GATEX_TECHNOLOGY_PUBLICATION_SECRET') or os.environ.get('GATEX_INTELLIGENCE_INTAKE_SECRET', '')).strip(),
-        'Content-Type': 'multipart/form-data; boundary=' + boundary})
+        'Content-Type': 'multipart/form-data; boundary=' + boundary, 'Accept': 'application/json', 'User-Agent': CLIENT_NAME})
     try:
         with urlopen(req, timeout=150) as response: result = json.load(response)
     except HTTPError as error: raise RuntimeError('Publication returned HTTP ' + str(error.code)) from None
@@ -313,7 +320,7 @@ def main():
     print('stage=technology-frontiers status=ok count=' + str(count))
 
 def failure_status(error):
-    if isinstance(error, ServiceFailure): return ' http_status=' + str(error.status) + ' failure_scope=' + error.scope
+    if isinstance(error, ServiceFailure): return ' http_status=' + str(error.status) + ' failure_scope=' + error.scope + (' edge_code=' + error.edge_code if error.edge_code else '')
     match = re.fullmatch(r'(?:Service|Publication) returned HTTP ([1-5][0-9]{2})', str(error)) if isinstance(error, RuntimeError) else None
     return ' http_status=' + match[1] if match else ''
 
