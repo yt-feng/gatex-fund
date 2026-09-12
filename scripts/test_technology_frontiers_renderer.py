@@ -18,16 +18,16 @@ def edition(blocks):
 
 class RendererTests(unittest.TestCase):
     def comparison(self):
-        return [paragraph('The distinction is set out in the following table:', 1),
-            paragraph('Can change / Cannot change', 2, 3),
-            paragraph('Consensus wrong: Reassessment & its condition / Value trap with a qualification', 4, 6),
-            paragraph('Consensus right: Change below 20% / Persistence above 30%', 7, 9)]
+        return [paragraph('Expanded into the following table:', 2),
+            paragraph('Can be changed / Cannot be changed', 3, 4),
+            paragraph("Consensus is wrong: Contrarian—this is a strategy that can make big money / Value trap: Even though you are right, you don't get paid.", 5, 7),
+            paragraph('Consensus is right: Go with the consensus, but only if the wind stops (e.g., policy risk) / Go with the consensus, but what you earn is a discount from "underestimated persistence."', 8, 10)]
 
     def test_comparison_preserves_every_cell_and_does_not_mutate_source_blocks(self):
         blocks = self.comparison(); before = deepcopy(blocks)
-        expected = [['', 'Consensus wrong', 'Consensus right'],
-            ['Can change', 'Reassessment & its condition', 'Change below 20%'],
-            ['Cannot change', 'Value trap with a qualification', 'Persistence above 30%']]
+        expected = [['', 'Consensus is wrong', 'Consensus is right'],
+            ['Can be changed', 'Contrarian—this is a strategy that can make big money', 'Go with the consensus, but only if the wind stops (e.g., policy risk)'],
+            ['Cannot be changed', "Value trap: Even though you are right, you don't get paid.", 'Go with the consensus, but what you earn is a discount from "underestimated persistence."']]
         self.assertEqual(renderer.comparison_table_cells(blocks, 1), expected)
         self.assertTrue(expected[2][1].startswith('Value trap'))
         self.assertTrue(expected[2][2].startswith('Persistence'))
@@ -42,6 +42,11 @@ class RendererTests(unittest.TestCase):
         unrelated = self.comparison()
         unrelated[1]['text'] = 'Lower intensity / Higher intensity'
         self.assertEqual(renderer.comparison_table_cells(unrelated, 1)[0], ['', 'Lower intensity', 'Higher intensity'])
+        concise = self.comparison()
+        concise[1]['text'] = 'Can change / Cannot change'
+        concise[2]['text'] = concise[2]['text'].replace('Consensus is wrong:', 'Consensus wrong:')
+        concise[3]['text'] = concise[3]['text'].replace('Consensus is right:', 'Consensus right:')
+        self.assertEqual(renderer.comparison_table_cells(concise, 1)[0], ['', 'Consensus wrong', 'Consensus right'])
 
     def test_native_table_pdf_retains_all_cell_text(self):
         cells = renderer.comparison_table_cells(self.comparison(), 1)
@@ -53,13 +58,13 @@ class RendererTests(unittest.TestCase):
         extracted = ' '.join((pages[0].extract_text() or '').split())
         for row in cells:
             for cell in row:
-                self.assertIn(cell, extracted)
+                self.assertIn(renderer.plain(cell), extracted)
 
     def test_ambiguous_comparisons_remain_original_paragraphs(self):
         variants = []
         for index, patch in [(0, {'text': 'Ordinary prose without a table introduction.'}),
-            (1, {'sourceLines': [2, 2]}), (2, {'text': 'First category: one / two / three'}),
-            (3, {'sourceLines': [8, 10]}), (3, {'text': 'Missing row label delimiter / another cell'})]:
+            (1, {'sourceLines': [3, 3]}), (2, {'text': 'First category: one / two / three'}),
+            (3, {'sourceLines': [9, 11]}), (3, {'text': 'Missing row label delimiter / another cell'})]:
             blocks = self.comparison(); blocks[index].update(patch); variants.append(blocks)
         for blocks in variants:
             with self.subTest(blocks=blocks):
@@ -68,7 +73,7 @@ class RendererTests(unittest.TestCase):
                 self.assertFalse(any(isinstance(item, Table) for item in items))
                 texts = [item.getPlainText() for item in items if isinstance(item, Paragraph)]
                 for block in blocks:
-                    self.assertIn(block['text'], texts)
+                    self.assertIn(renderer.plain(block['text']), texts)
 
     def test_source_note_does_not_interrupt_an_intro_and_its_list(self):
         long_text = 'This substantive paragraph develops the original argument, preserving its evidence, context and qualifications for the reader.'
