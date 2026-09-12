@@ -201,19 +201,30 @@ def translate(source):
         end, chars = completed, 0
         while end < len(lines) and (chars < 6500 or end == completed):
             chars += len(lines[end]); end += 1
-        numbered = {'articleTitle': source['title'],
-            'lines': [{'line': i+1, 'text': lines[i]} for i in range(completed, end)]}
-        last_error = None
-        for attempt in range(3):
-            prompt = TRANSLATE_PROMPT + (' Your previous response failed: ' + str(last_error) + '. Correct the structure without omitting any source content.' if last_error else '')
-            try:
-                result = model_call(prompt, numbered)
-                chunk = validate_blocks(result.get('blocks') or [], end-completed, completed+1, lines)
-                break
-            except ValueError as error:
-                last_error = error
-                print('stage=translation-validation status=retry attempt=' + str(attempt + 1) + failure_status(error), file=sys.stderr, flush=True)
-        else: raise last_error
+        # A long or structurally unusual article can make a model omit one
+        # line even when the requested ranges are valid. Retry the same work
+        # in progressively smaller contiguous chunks before giving up; this
+        # keeps the source coverage invariant while avoiding a lossy summary.
+        while True:
+            numbered = {'articleTitle': source['title'],
+                'lines': [{'line': i+1, 'text': lines[i]} for i in range(completed, end)]}
+            last_error = None
+            for attempt in range(3):
+                prompt = TRANSLATE_PROMPT + (' Your previous response failed: ' + str(last_error) + '. Correct the structure without omitting any source content.' if last_error else '')
+                try:
+                    result = model_call(prompt, numbered)
+                    chunk = validate_blocks(result.get('blocks') or [], end-completed, completed+1, lines)
+                    break
+                except ValueError as error:
+                    last_error = error
+                    print('stage=translation-validation status=retry attempt=' + str(attempt + 1) + failure_status(error), file=sys.stderr, flush=True)
+            else:
+                if end - completed > 1:
+                    end = completed + max(1, (end - completed) // 2)
+                    print('stage=translation-validation status=split next_lines=' + str(end - completed), file=sys.stderr, flush=True)
+                    continue
+                raise last_error
+            break
         blocks += chunk; completed = end
         api('/sources/' + source['id'] + '/progress', {'translationBlocks': blocks})
     heading = model_call('Return JSON {title,listingDescription,artDirection}. Translate the article title faithfully '

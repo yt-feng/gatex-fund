@@ -120,6 +120,18 @@ class DailyEditionTests(unittest.TestCase):
         self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
         self.assertEqual(len(result['blocks']),1)
 
+    def test_source_coverage_failure_splits_chunk_before_giving_up(self):
+        invalid = {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Only first'}]}
+        first = {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'First'}]}
+        second = {'blocks':[{'type':'paragraph','sourceLines':[2,2],'text':'Second'}]}
+        with patch.object(daily,'model_call',side_effect=[invalid, invalid, invalid, first, second,
+            {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, \
+            patch.object(daily,'api',return_value={'ok':True}), \
+            patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
+            result=daily.translate({'id':'sample','title':'Title','lines':['source one','source two']})
+        self.assertEqual([b['sourceLines'] for b in result['blocks']], [[1,1],[2,2]])
+        self.assertEqual(model.call_args_list[3].args[1]['lines'],[{'line':1,'text':'source one'}])
+
     def test_unreviewed_saved_translation_is_corrected_without_retranslation_or_art_changes(self):
         original=[{'type':'paragraph','sourceLines':[1,1],'text':'A persistent discount.'}]
         corrected=[{'type':'paragraph','sourceLines':[1,1],'text':'A discount for underestimated persistence.'}]
