@@ -30,7 +30,6 @@ if [[ ! "$maximum_items" =~ ^[0-9]+$ || "$maximum_items" -lt 1 || "$maximum_item
 fi
 
 : "${RUNTIME_AGE_IDENTITY:?runtime identity is required}"
-: "${TIKHUB_WECHAT_TOKEN:?TikHub credential is required}"
 if [[ "$delivery_mode" == "post" ]]; then
   : "${frontier_secret:?Technology publication credential is required}"
 fi
@@ -45,16 +44,49 @@ chmod 600 "$work_dir/runtime.identity"
 "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/runtime-config.json" "$profile_root/runtime-config.json.age"
 "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/state.json" "$profile_root/technology-backfill-checkpoint.json.age"
 unset RUNTIME_AGE_IDENTITY
-printf '' > "$work_dir/runtime.identity"
 
-PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli technology-backfill-page \
-  --config "$work_dir/runtime-config.json" \
-  --state "$work_dir/state.json" \
-  --state-out "$work_dir/state.next.json" \
-  --output "$work_dir/sources.jsonl" \
-  --maximum-items "$maximum_items" \
-  --base-url "${TIKHUB_API_BASE:-https://api.tikhub.io}"
+seed_pending="$(python3 - "$work_dir/state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+print("1" if state.get("seedPending") else "0")
+PY
+)"
+: > "$work_dir/sources.jsonl"
+if [[ "$seed_pending" == "1" ]]; then
+  "$age_bin" -d -i "$work_dir/runtime.identity" \
+    -o "$work_dir/seed.jsonl" "$profile_root/technology-seed.jsonl.age"
+  cat "$work_dir/seed.jsonl" >> "$work_dir/sources.jsonl"
+fi
+
+if [[ -n "${TIKHUB_WECHAT_TOKEN:-}" ]]; then
+  PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli technology-backfill-page \
+    --config "$work_dir/runtime-config.json" \
+    --state "$work_dir/state.json" \
+    --state-out "$work_dir/state.next.json" \
+    --output "$work_dir/tikhub.jsonl" \
+    --maximum-items "$maximum_items" \
+    --base-url "${TIKHUB_API_BASE:-https://api.tikhub.io}"
+  cat "$work_dir/tikhub.jsonl" >> "$work_dir/sources.jsonl"
+else
+  if [[ "$seed_pending" != "1" ]]; then
+    echo "stage=technology-backfill status=skipped reason=tikhub-credential-unavailable"
+    exit 0
+  fi
+  cp "$work_dir/state.json" "$work_dir/state.next.json"
+fi
+printf '' > "$work_dir/runtime.identity"
 unset TIKHUB_WECHAT_TOKEN
+
+if [[ "$seed_pending" == "1" ]]; then
+  python3 - "$work_dir/state.next.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path, encoding="utf-8"))
+state["seedPending"] = False
+json.dump(state, open(path, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
+open(path, "a", encoding="utf-8").write("\n")
+PY
+fi
 
 prepared_count="$(wc -l < "$work_dir/sources.jsonl" | tr -d '[:space:]')"
 if [[ "$delivery_mode" == "dry-run" ]]; then
