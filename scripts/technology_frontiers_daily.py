@@ -21,6 +21,22 @@ ALLOWED_TYPES = {'paragraph', 'heading', 'subheading', 'bullet', 'note', 'divide
 def digest(value: bytes | str) -> str:
     return hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()
 
+class ServiceFailure(RuntimeError):
+    def __init__(self, status, scope):
+        super().__init__('Service returned HTTP ' + str(status))
+        self.status, self.scope = status, scope
+
+def service_failure(error):
+    scope = 'service'
+    content_type = error.headers.get('content-type', '').lower()
+    if 'text/html' in content_type: scope = 'edge'
+    elif 'application/json' in content_type:
+        try:
+            payload = json.loads(error.read(8192))
+            if payload.get('error') == 'Intelligence intake credentials are not valid.': scope = 'queue-auth'
+        except (ValueError, TypeError): pass
+    return ServiceFailure(error.code, scope)
+
 def request_json(url, token, payload=None, method=None, timeout=150):
     body = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
     req = Request(url, data=body, method=method or ('POST' if body else 'GET'),
@@ -31,7 +47,7 @@ def request_json(url, token, payload=None, method=None, timeout=150):
             if len(data) > 4 * 1024 * 1024: raise RuntimeError('Service response exceeds limit')
             return json.loads(data)
     except HTTPError as error:
-        raise RuntimeError('Service returned HTTP ' + str(error.code)) from None
+        raise service_failure(error) from None
 
 def api(path, payload=None, method=None):
     token = os.environ.get('GATEX_INTELLIGENCE_INTAKE_SECRET', '')
@@ -296,6 +312,7 @@ def main():
     print('stage=technology-frontiers status=ok count=' + str(count))
 
 def failure_status(error):
+    if isinstance(error, ServiceFailure): return ' http_status=' + str(error.status) + ' failure_scope=' + error.scope
     match = re.fullmatch(r'(?:Service|Publication) returned HTTP ([1-5][0-9]{2})', str(error)) if isinstance(error, RuntimeError) else None
     return ' http_status=' + match[1] if match else ''
 

@@ -67,6 +67,13 @@ class DailyEditionTests(unittest.TestCase):
             with self.assertRaises(RuntimeError): daily.publish_pending(2,Path(temp))
         self.assertEqual(produce.call_count,2)
 
+    def test_http_failure_logging_exposes_only_controlled_status_and_scope(self):
+        import io
+        auth=daily.HTTPError('https://example.test',403,'Denied',{'content-type':'application/json'},io.BytesIO(b'{"error":"Intelligence intake credentials are not valid."}'))
+        edge=daily.HTTPError('https://example.test',403,'Denied',{'content-type':'text/html'},io.BytesIO(b'<html>private diagnostic</html>'))
+        self.assertEqual(daily.failure_status(daily.service_failure(auth)),' http_status=403 failure_scope=queue-auth')
+        self.assertEqual(daily.failure_status(daily.service_failure(edge)),' http_status=403 failure_scope=edge')
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))
