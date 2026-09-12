@@ -24,7 +24,6 @@ _ENDPOINTS = {PROFILE_ENDPOINT, ARTICLES_ENDPOINT, DETAIL_ENDPOINT}
 _API_HOSTS = {"api.tikhub.io", "api.tikhub.dev"}
 _USERNAME = re.compile(r"^gh_[A-Za-z0-9_]{3,61}$")
 _WHITESPACE = re.compile(r"\s+")
-_TECHNOLOGY_BIZ = "Mzg3NzUxNDU0NA=="
 
 
 class BackfillError(RuntimeError):
@@ -407,7 +406,9 @@ def _first_digit(value: Any, maximum: int) -> str:
     return text
 
 
-def _technology_identity(content: Mapping[str, Any], candidate: BackfillCandidate) -> dict[str, str]:
+def _technology_identity(
+    content: Mapping[str, Any], candidate: BackfillCandidate, approved_biz: str
+) -> dict[str, str]:
     """Build the stable WeChat identity required by the private edition queue.
 
     TikHub can return either a signed article URL or a detail payload with the
@@ -446,7 +447,7 @@ def _technology_identity(content: Mapping[str, Any], candidate: BackfillCandidat
     idx = idx or _first_digit(query_values.get("idx"), 3) or "1"
     if not mid or not (1 <= int(idx) <= 999):
         raise BackfillError("article document identity is unavailable")
-    return {"__biz": _TECHNOLOGY_BIZ, "mid": mid, "idx": idx}
+    return {"__biz": approved_biz, "mid": mid, "idx": idx}
 
 
 def _technology_source_from_detail(
@@ -455,6 +456,7 @@ def _technology_source_from_detail(
     intake_config: Mapping[str, Any],
     username: str,
     candidate: BackfillCandidate,
+    approved_biz: str,
 ) -> dict[str, Any]:
     content = _detail_content(payload)
     if content.get("user_name") != username:
@@ -497,7 +499,7 @@ def _technology_source_from_detail(
     )
     return {
         "schema": "gatex-technology-source/v1",
-        "documentIdentity": _technology_identity(content, candidate),
+        "documentIdentity": _technology_identity(content, candidate, approved_biz),
         "sourceName": "Unsolved Problems",
         "sourceUrl": source_url,
         "title": title,
@@ -529,6 +531,10 @@ def run_technology_backfill_page(
     if intake.get("verification_status") != "verified":
         raise BackfillError("source identity is not verified")
     expected_publisher = _required_text(intake.get("publisher"), "publisher", 160)
+    provider = config.get("provider") if isinstance(config, dict) else None
+    approved_biz = str(provider.get("expected_biz") or "").strip() if isinstance(provider, dict) else ""
+    if not re.fullmatch(r"[A-Za-z0-9_=-]{1,256}", approved_biz):
+        raise BackfillError("approved source identity is unavailable")
     if not isinstance(state, dict):
         raise BackfillError("backfill state is invalid")
     limit = max(1, min(int(maximum_items), 50))
@@ -556,6 +562,7 @@ def run_technology_backfill_page(
             intake_config=intake,
             username=username,
             candidate=candidate,
+            approved_biz=approved_biz,
         )
         for candidate in selected
     ]

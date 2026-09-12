@@ -633,9 +633,10 @@ class TikHubBackfillTests(unittest.TestCase):
             intake_config=intake_config(),
             username="gh_synthetic123",
             candidate=candidate,
+            approved_biz="synthetic-biz",
         )
         self.assertEqual(source["sourceName"], "Unsolved Problems")
-        self.assertEqual(source["documentIdentity"]["__biz"], "Mzg3NzUxNDU0NA==")
+        self.assertEqual(source["documentIdentity"]["__biz"], "synthetic-biz")
         self.assertEqual(source["documentIdentity"]["mid"], "2247485001")
         self.assertEqual(source["lines"], ["First passage", "", "Second passage"])
 
@@ -662,7 +663,10 @@ class TikHubBackfillTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "config.json").write_text(json.dumps({"intelligence_intake": intake_config()}), encoding="utf-8")
+            (root / "config.json").write_text(json.dumps({
+                "intelligence_intake": intake_config(),
+                "provider": {"expected_biz": "synthetic-biz"},
+            }), encoding="utf-8")
             (root / "state.json").write_text(json.dumps({
                 "version": 1, "offset": "cursor-1", "is_end": False,
                 "pending": [candidate.as_dict()], "pending_next_offset": "cursor-2",
