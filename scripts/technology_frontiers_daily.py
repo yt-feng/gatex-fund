@@ -147,6 +147,7 @@ def translate(source):
         {'originalTitle': source['title'], 'translatedArticle': blocks})
     for key in ('title', 'listingDescription', 'artDirection'):
         if not isinstance(heading.get(key), str) or not heading[key].strip(): raise ValueError('Missing edition heading')
+        heading[key] = heading[key].strip()
     if len(heading['title']) > 200: raise ValueError('Translated title exceeds cover limit')
     if re.search(r'[\u3400-\u9fff]', heading['title'] + heading['listingDescription']): raise ValueError('Untranslated heading remains')
     result = {**heading, 'blocks': blocks}
@@ -165,7 +166,7 @@ def generated_art(source, translation, directory):
             'Place a sophisticated, tangible, visually memorable article-specific sculptural scene entirely in lower 45 percent. '
             'Refined materials, coherent dramatic studio lighting, blue/cyan with restrained warm accents. '
             'No text, typography, letters, numbers, logos, watermarks, arrows or charts. No generic AI brain or humanoid robot. '
-            'Editorial concept: ' + translation['artDirection'])
+            'Editorial concept: ' + translation['artDirection'].strip()).strip()
         response = request_json(art_base + '/v1/images/generations', token,
             {'model': ART_MODEL, 'prompt': prompt, 'n': 1, 'size': '2:3', 'resolution': '1k'})
         data = response.get('data'); data = data[0] if isinstance(data, list) else data

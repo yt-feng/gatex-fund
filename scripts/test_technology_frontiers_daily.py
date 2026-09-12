@@ -44,6 +44,14 @@ class DailyEditionTests(unittest.TestCase):
         self.assertEqual(len(result['blocks']),2)
         self.assertEqual(api.call_count,2)
 
+    def test_model_heading_whitespace_is_normalized_before_paid_cover(self):
+        with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]},
+            {'title':'  A title\n','listingDescription':' Description. ','artDirection':' A visual\n  '}]), patch.object(daily,'api',return_value={'ok':True}):
+            result=daily.translate({'id':'sample','title':'Title','lines':['source']})
+        self.assertEqual(result['title'],'A title')
+        self.assertEqual(result['listingDescription'],'Description.')
+        self.assertEqual(result['artDirection'],'A visual')
+
     def test_new_source_after_failed_lexical_page_is_not_starved(self):
         pages = [{'sources':[{'id':'aaa-old-failed','publishedAt':'2026-08-01'}], 'cursor':'opaque/next'},
                  {'sources':[{'id':'zzz-new','publishedAt':'2026-09-12'}]}]
