@@ -19,16 +19,18 @@ def edition(blocks):
 class RendererTests(unittest.TestCase):
     def comparison(self):
         return [paragraph('The distinction is set out in the following table:', 1),
-            paragraph('Lower intensity / Higher intensity', 2, 3),
-            paragraph('First category: Value A & its condition / Value B with a qualification', 4, 6),
-            paragraph('Second category: Value C below 20% / Value D above 30%', 7, 9)]
+            paragraph('Can change / Cannot change', 2, 3),
+            paragraph('Consensus wrong: Reassessment & its condition / Value trap with a qualification', 4, 6),
+            paragraph('Consensus right: Change below 20% / Persistence above 30%', 7, 9)]
 
     def test_comparison_preserves_every_cell_and_does_not_mutate_source_blocks(self):
         blocks = self.comparison(); before = deepcopy(blocks)
-        expected = [['', 'Lower intensity', 'Higher intensity'],
-            ['First category', 'Value A & its condition', 'Value B with a qualification'],
-            ['Second category', 'Value C below 20%', 'Value D above 30%']]
+        expected = [['', 'Consensus wrong', 'Consensus right'],
+            ['Can change', 'Reassessment & its condition', 'Change below 20%'],
+            ['Cannot change', 'Value trap with a qualification', 'Persistence above 30%']]
         self.assertEqual(renderer.comparison_table_cells(blocks, 1), expected)
+        self.assertTrue(expected[2][1].startswith('Value trap'))
+        self.assertTrue(expected[2][2].startswith('Persistence'))
         items = renderer.story(edition(blocks))
         tables = [item for item in items if isinstance(item, Table)]
         self.assertEqual(len(tables), 1)
@@ -37,6 +39,9 @@ class RendererTests(unittest.TestCase):
         width, height = tables[0].wrap(renderer.W - 96, renderer.H - 129)
         self.assertAlmostEqual(width, renderer.W - 96)
         self.assertLess(height, renderer.H - 129)
+        unrelated = self.comparison()
+        unrelated[1]['text'] = 'Lower intensity / Higher intensity'
+        self.assertEqual(renderer.comparison_table_cells(unrelated, 1)[0], ['', 'Lower intensity', 'Higher intensity'])
 
     def test_native_table_pdf_retains_all_cell_text(self):
         cells = renderer.comparison_table_cells(self.comparison(), 1)

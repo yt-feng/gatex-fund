@@ -117,6 +117,11 @@ def comparison_table_cells(blocks, index):
         values = values.split(' / ')
         if not colon or not label.strip() or len(values) != 2 or not all(cell.strip() for cell in values): return None
         cells.append([label.strip(), *(cell.strip() for cell in values)])
+    # The article refers to the value trap as bottom-left and persistence as
+    # bottom-right: consensus belongs on the horizontal axis in this matrix.
+    if ([value.casefold() for value in cells[0][1:]] == ['can change', 'cannot change']
+        and [row[0].casefold() for row in cells[1:]] == ['consensus wrong', 'consensus right']):
+        cells = [list(row) for row in zip(*cells)]
     return cells
 
 def comparison_table(cells):
