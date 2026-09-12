@@ -99,7 +99,7 @@ def enqueue_batch(batch_root):
     return count
 
 
-def enqueue_sources_file(input_path):
+def enqueue_sources_file(input_path, rebuild=False):
     """Durably enqueue source records prepared by the historical collector."""
     path = Path(input_path).resolve()
     count = 0
@@ -115,7 +115,8 @@ def enqueue_sources_file(input_path):
                 raise ValueError('Historical source record must be an object')
             if source.get('schema') != SCHEMA or source.get('sourceName') != 'Unsolved Problems':
                 raise ValueError('Historical source record is not an approved Technology Frontiers source')
-            result = api('/sources', source)
+            payload = {**source, **({'rebuild': True} if rebuild else {})}
+            result = api('/sources', payload)
             if not result.get('ok'):
                 raise RuntimeError('Source was not durably accepted')
             count += 1
@@ -306,7 +307,8 @@ def cover_prompt(translation):
 
 def generated_art(source, translation, directory):
     from PIL import Image
-    task = (source.get('progress') or {}).get('coverTask')
+    refresh_cover = source.get('rebuild') is True
+    task = None if refresh_cover else (source.get('progress') or {}).get('coverTask')
     token = os.environ.get('APIMART_API_KEY') or os.environ.get('GATEX_MODEL_CREDENTIAL', '')
     art_base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
     if art_base.endswith('/v1'): art_base = art_base[:-3]
@@ -318,7 +320,9 @@ def generated_art(source, translation, directory):
         task_id = data.get('task_id') or data.get('id')
         if not task_id: raise RuntimeError('Cover service returned no task')
         task = {'taskId': task_id, 'provider': 'APIMart', 'model': ART_MODEL, 'prompt': prompt, 'promptSha256': digest(prompt)}
-        api('/sources/' + source['id'] + '/progress', {'coverTask': task})
+        progress = {'coverTask': task}
+        if refresh_cover: progress['replaceCoverTask'] = True
+        api('/sources/' + source['id'] + '/progress', progress)
     for _ in range(50):
         result = request_json(art_base + '/v1/tasks/' + task['taskId'] + '?language=en', token)['data']
         if result['status'] == 'failed': raise RuntimeError('Cover generation failed; receipt preserved for review')
@@ -430,7 +434,7 @@ def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
     queue = sub.add_parser('enqueue'); queue.add_argument('--batch', required=True)
-    historical = sub.add_parser('enqueue-jsonl'); historical.add_argument('--input', required=True)
+    historical = sub.add_parser('enqueue-jsonl'); historical.add_argument('--input', required=True); historical.add_argument('--rebuild', action='store_true')
     publish = sub.add_parser('publish'); publish.add_argument('--limit', type=int, default=5); publish.add_argument('--runtime', required=True)
     args = parser.parse_args()
     if args.command == 'enqueue':
@@ -438,7 +442,7 @@ def main():
         count = enqueue_batch(args.batch)
     elif args.command == 'enqueue-jsonl':
         CURRENT_STAGE = 'source-queue'
-        count = enqueue_sources_file(args.input)
+        count = enqueue_sources_file(args.input, args.rebuild)
     else:
         runtime = Path(args.runtime); runtime.mkdir(parents=True, exist_ok=True)
         count = publish_pending(min(max(args.limit, 1), 10), runtime)

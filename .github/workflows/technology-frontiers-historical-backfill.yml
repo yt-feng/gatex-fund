@@ -18,6 +18,12 @@ on:
         options:
           - dry-run
           - post
+      rebuild_covers:
+        description: Re-render archived editions with the current no-people cover direction
+        required: true
+        default: "0"
+        type: choice
+        options: ["0", "1"]
 
 permissions:
   contents: write
@@ -50,6 +56,7 @@ jobs:
           GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}
           TECHNOLOGY_BACKFILL_MAXIMUM_ITEMS: ${{ inputs.maximum_items || '20' }}
           TECHNOLOGY_BACKFILL_MODE: ${{ inputs.mode || 'post' }}
+          TECHNOLOGY_BACKFILL_REBUILD_COVERS: ${{ inputs.rebuild_covers || '0' }}
           TIKHUB_API_BASE: https://api.tikhub.io
         run: bash scripts/run_technology_backfill.sh
       - name: Remove private working files

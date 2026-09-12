@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "15 4 * * *"
   workflow_run:
-    workflows: [scheduled-snapshot]
+    workflows: [scheduled-snapshot, technology-frontiers-historical-backfill]
     types: [completed]
     branches: [main]
   workflow_dispatch:

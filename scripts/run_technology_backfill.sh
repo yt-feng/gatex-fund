@@ -9,6 +9,7 @@ work_dir="$(mktemp -d "$runner_base/technology-backfill.XXXXXX")"
 age_bin=""
 delivery_mode="${TECHNOLOGY_BACKFILL_MODE:-post}"
 maximum_items="${TECHNOLOGY_BACKFILL_MAXIMUM_ITEMS:-20}"
+rebuild_covers="${TECHNOLOGY_BACKFILL_REBUILD_COVERS:-0}"
 frontier_secret="${GATEX_TECHNOLOGY_PUBLICATION_SECRET-}"
 unset GATEX_TECHNOLOGY_PUBLICATION_SECRET
 
@@ -26,6 +27,10 @@ if [[ "$delivery_mode" != "dry-run" && "$delivery_mode" != "post" ]]; then
 fi
 if [[ ! "$maximum_items" =~ ^[0-9]+$ || "$maximum_items" -lt 1 || "$maximum_items" -gt 50 ]]; then
   echo "stage=technology-backfill status=failed reason=maximum-items-invalid" >&2
+  exit 1
+fi
+if [[ "$rebuild_covers" != "0" && "$rebuild_covers" != "1" ]]; then
+  echo "stage=technology-backfill status=failed reason=rebuild-covers-invalid" >&2
   exit 1
 fi
 
@@ -52,7 +57,7 @@ print("1" if state.get("seedPending") else "0")
 PY
 )"
 : > "$work_dir/sources.jsonl"
-if [[ "$seed_pending" == "1" ]]; then
+if [[ "$seed_pending" == "1" || "$rebuild_covers" == "1" ]]; then
   "$age_bin" -d -i "$work_dir/runtime.identity" \
     -o "$work_dir/seed.jsonl" "$profile_root/technology-seed.jsonl.age"
   cat "$work_dir/seed.jsonl" >> "$work_dir/sources.jsonl"
@@ -68,7 +73,7 @@ if [[ -n "${TIKHUB_WECHAT_TOKEN:-}" ]]; then
     --base-url "${TIKHUB_API_BASE:-https://api.tikhub.io}"
   cat "$work_dir/tikhub.jsonl" >> "$work_dir/sources.jsonl"
 else
-  if [[ "$seed_pending" != "1" ]]; then
+  if [[ "$seed_pending" != "1" && "$rebuild_covers" != "1" ]]; then
     echo "stage=technology-backfill status=skipped reason=tikhub-credential-unavailable"
     exit 0
   fi
@@ -94,8 +99,10 @@ if [[ "$delivery_mode" == "dry-run" ]]; then
   exit 0
 fi
 
+enqueue_args=(enqueue-jsonl --input "$work_dir/sources.jsonl")
+if [[ "$rebuild_covers" == "1" ]]; then enqueue_args+=(--rebuild); fi
 GATEX_TECHNOLOGY_PUBLICATION_SECRET="$frontier_secret" \
-  python3 "$repo_root/scripts/technology_frontiers_daily.py" enqueue-jsonl --input "$work_dir/sources.jsonl"
+  python3 "$repo_root/scripts/technology_frontiers_daily.py" "${enqueue_args[@]}"
 frontier_secret=""
 
 "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" \
