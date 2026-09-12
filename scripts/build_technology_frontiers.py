@@ -4,7 +4,7 @@ duplicate lines. This builder does not summarize, call a model or add research.
 """
 from pathlib import Path
 from xml.sax.saxutils import escape
-import argparse, hashlib, json, os, shutil
+import argparse, hashlib, json, os, re, shutil
 from datetime import datetime, timezone
 from reportlab.lib.colors import HexColor, white
 from reportlab.lib.styles import ParagraphStyle
@@ -56,6 +56,11 @@ STYLES = {
 
 def plain(text):
     return text.replace('\u2011', '-').replace('\u2013', '-').replace('\u2014', ' - ')
+
+def display_text(text):
+    """Keep article wording while omitting raw source URLs from the layout."""
+    cleaned = re.sub(r'https?://[^\s<>()\[\]{}]+', '', str(text))
+    return re.sub(r'[ \t]{2,}', ' ', cleaned).strip()
 
 def draw_paragraph(c, text, x, y, width, size, leading, color, font='GX'):
     p = Paragraph(escape(plain(text)).replace('\n', '<br/>'), ParagraphStyle(
@@ -133,7 +138,7 @@ def comparison_table(cells):
         leading=14.5, spaceAfter=0, allowWidows=1, allowOrphans=1)
     label_style = ParagraphStyle('ComparisonLabel', parent=body_style, fontName='GXB', fontSize=10,
         leading=14, textColor=NAVY)
-    rows = [[Paragraph(escape(plain(value)).replace('\n', '<br/>'),
+    rows = [[Paragraph(escape(plain(display_text(value))).replace('\n', '<br/>'),
         label_style if row == 0 or column == 0 else body_style)
         for column, value in enumerate(values)] for row, values in enumerate(cells)]
     column_width = (W - 96 - 95) / 2
@@ -174,7 +179,11 @@ def story(edition):
         if block['type'] == 'divider':
             items.extend([Spacer(1, 6), Paragraph('* * *', STYLES['note'])])
         else:
-            text = escape(plain(block['text'])).replace('\n', '<br/>')
+            rendered = display_text(block['text'])
+            if not rendered:
+                index += 1
+                continue
+            text = escape(plain(rendered)).replace('\n', '<br/>')
             if block['type'] == 'bullet': text = '- ' + text
             items.append(Paragraph(text, STYLES[block['type']]))
         index += 1

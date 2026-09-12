@@ -90,6 +90,13 @@ class RendererTests(unittest.TestCase):
         intro_index = texts.index('Three key points:')
         self.assertEqual(texts[intro_index + 1:intro_index + 4], ['- First point.', '- Second point.', '- Third point.'])
 
+    def test_raw_source_urls_are_omitted_from_body_layout(self):
+        blocks = [paragraph('Original essay: https://example.com/article', 1),
+            paragraph('A substantive paragraph follows the reference.', 2)]
+        texts = [item.getPlainText() for item in renderer.story(edition(blocks)) if isinstance(item, Paragraph)]
+        self.assertIn('Original essay:', texts)
+        self.assertNotIn('https://example.com/article', ' '.join(texts))
+
     def test_short_article_keeps_disclaimer_after_body_without_splitting_table(self):
         blocks = self.comparison()
         items = renderer.story(edition(blocks))
