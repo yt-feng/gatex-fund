@@ -43,7 +43,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends fonts-liberation2 poppler-utils
           python3 -m pip install --disable-pip-version-check -r requirements-technology-frontiers.txt
       - name: Validate editorial pipeline
-        run: python3 scripts/test_technology_frontiers_daily.py
+        run: |
+          python3 scripts/test_technology_frontiers_daily.py
+          python3 scripts/test_technology_frontiers_renderer.py
       - name: Translate, render and publish complete editions
         env:
           GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}

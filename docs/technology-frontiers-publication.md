@@ -26,7 +26,10 @@ Its service path is `/api/integrations/technology-frontiers` on the GateX site.
 
 The queue keeps ordered source lines, translated-block progress and independent
 image-task receipts privately. Every source line must appear once, in order, in
-the English edition. A truncated response, missing coverage, untranslated text,
+the English edition. A second bilingual editorial pass checks terminology and
+qualifier scope against the unchanged source-line map before marking the private
+translation as reviewed. The renderer retains recognized comparison tables as
+native table cells. A truncated response, missing coverage, untranslated text,
 invalid cover or unreadable PDF prevents publication. An unfinished image task
 is reused by the next run. Completed reports are published only after the PDF
 and cover are stored and verified; replay preserves the first publication time.

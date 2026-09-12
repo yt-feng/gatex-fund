@@ -31,22 +31,22 @@ class DailyEditionTests(unittest.TestCase):
         with self.assertRaises(ValueError): daily.parse_model_json({'choices':[{'finish_reason':'length','message':{'content':'{}'}}]})
 
     def test_existing_translation_reused_without_model_or_writes(self):
-        saved = {'title':'Title','blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]}
+        saved = {'title':'Title','reviewVersion':'faithful-v1','blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]}
         with patch.object(daily,'model_call',side_effect=AssertionError('must not call')), patch.object(daily,'api',side_effect=AssertionError('must not write')):
             self.assertEqual(daily.translate({'lines':['source'], 'progress':{'translation':saved}}),saved)
 
     def test_partial_translation_resumes_after_last_saved_line(self):
         saved=[{'type':'paragraph','sourceLines':[1,1],'text':'First'}]
         with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'paragraph','sourceLines':[2,2],'text':'Second'}]},
-            {'title':'A title','listingDescription':'Description.','artDirection':'A visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
+            {'title':'A title','listingDescription':'Description.','artDirection':'A visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api, patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
             result=daily.translate({'id':'sample','title':'Title','lines':['first','second'],'progress':{'translationBlocks':saved}})
         self.assertEqual(model.call_args_list[0].args[1]['lines'],[{'line':2,'text':'second'}])
         self.assertEqual(len(result['blocks']),2)
-        self.assertEqual(api.call_count,2)
+        self.assertEqual(api.call_count,1)
 
     def test_model_heading_whitespace_is_normalized_before_paid_cover(self):
         with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]},
-            {'title':'  A title\n','listingDescription':' Description. ','artDirection':' A visual\n  '}]), patch.object(daily,'api',return_value={'ok':True}):
+            {'title':'  A title\n','listingDescription':' Description. ','artDirection':' A visual\n  '}]), patch.object(daily,'api',return_value={'ok':True}), patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
             result=daily.translate({'id':'sample','title':'Title','lines':['source']})
         self.assertEqual(result['title'],'A title')
         self.assertEqual(result['listingDescription'],'Description.')
@@ -115,10 +115,34 @@ class DailyEditionTests(unittest.TestCase):
     def test_invalid_structure_retries_identical_source_lines(self):
         with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'quote','sourceLines':[1,1],'text':'Body'}]},
             {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]},
-            {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}):
+            {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}), patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
             result=daily.translate({'id':'sample','title':'Title','lines':['source']})
         self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
         self.assertEqual(len(result['blocks']),1)
+
+    def test_unreviewed_saved_translation_is_corrected_without_retranslation_or_art_changes(self):
+        original=[{'type':'paragraph','sourceLines':[1,1],'text':'A persistent discount.'}]
+        corrected=[{'type':'paragraph','sourceLines':[1,1],'text':'A discount for underestimated persistence.'}]
+        draft={'title':'Old title','listingDescription':'Old summary.','artDirection':'Existing concept','blocks':original}
+        source={'id':'sample','title':'Source title','lines':['source'], 'progress':{'translation':draft,'coverTask':{'taskId':'saved-task'}}}
+        with patch.object(daily,'model_call',side_effect=[{'blocks':corrected},{'title':' Clear title ','listingDescription':'Faithful description.'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
+            result=daily.translate(source)
+        self.assertEqual(model.call_count,2)
+        self.assertEqual(result['blocks'],corrected)
+        self.assertEqual(result['reviewVersion'],'faithful-v1')
+        self.assertEqual(result['artDirection'],'Existing concept')
+        self.assertEqual(source['progress']['coverTask']['taskId'],'saved-task')
+        self.assertEqual(api.call_args.args[1]['translation'],result)
+
+    def test_review_cannot_repartition_or_drop_source_blocks(self):
+        original=[{'type':'paragraph','sourceLines':[1,1],'text':'First.'},{'type':'paragraph','sourceLines':[2,2],'text':'Second.'}]
+        merged={'blocks':[{'type':'paragraph','sourceLines':[1,2],'text':'First. Second.'}]}
+        source={'id':'sample','title':'Source','lines':['first','second']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
+        with patch.object(daily,'model_call',return_value=merged) as model, patch.object(daily,'api') as api:
+            with self.assertRaisesRegex(ValueError,'Review changed the source block map'): daily.review_translation(source,draft)
+        self.assertEqual(model.call_count,3)
+        api.assert_not_called()
 
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -8,7 +8,7 @@ import argparse, hashlib, json, os, shutil
 from datetime import datetime, timezone
 from reportlab.lib.colors import HexColor, white
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
@@ -22,7 +22,7 @@ ARCHIVE = next((path for path in [ROOT.parent / 'wechat-official-account-archive
 CONTENT = Path(os.environ.get('GATEX_EDITION_CONTENT', ROOT / 'content/technology-frontiers'))
 if os.environ.get('GATEX_SOURCE_ARCHIVE'):
     ARCHIVE = Path(os.environ['GATEX_SOURCE_ARCHIVE'])
-REVISION = '20260912-full-edition'
+REVISION = '20260912-reviewed-edition'
 W, H = 595.276, 841.89
 NAVY, BLUE, INK, MUTED, CYAN, LINE = map(HexColor,
     ['#081D38', '#1267A3', '#182E43', '#5A6E80', '#43BDD7', '#D3E0EA'])
@@ -98,10 +98,82 @@ DISCLAIMER_PARAGRAPHS = [
     ('Use and responsibility', 'Readers remain responsible for how they interpret and use this publication and for compliance with laws and restrictions applicable to them. To the extent permitted by applicable law, GateX and its affiliates do not accept liability for losses arising from reliance on the material or from errors, omissions, service interruptions or third-party content. Nothing in this notice excludes or limits duties or liabilities that cannot lawfully be excluded or limited, and no statement should be read as restricting a reader\'s mandatory statutory rights. Questions, correction requests and rights inquiries may be sent to info@gatex.fund.'),
 ]
 
+def comparison_table_cells(blocks, index):
+    """Recognize the preserved two-column comparison without editing its blocks."""
+    if index < 1 or index + 2 >= len(blocks): return None
+    if not blocks[index - 1].get('text', '').rstrip().casefold().endswith('table:'): return None
+    header, first, second = blocks[index:index + 3]
+    if any(block.get('type') != 'paragraph' for block in (header, first, second)): return None
+    ranges = [block.get('sourceLines') for block in (header, first, second)]
+    if any(not isinstance(bounds, (list, tuple)) or len(bounds) != 2
+        or any(type(value) is not int for value in bounds) for bounds in ranges): return None
+    if [end - start + 1 for start, end in ranges] != [2, 3, 3]: return None
+    if ranges[1][0] != ranges[0][1] + 1 or ranges[2][0] != ranges[1][1] + 1: return None
+    columns = header.get('text', '').split(' / ')
+    if len(columns) != 2 or not all(cell.strip() for cell in columns): return None
+    cells = [['', *(cell.strip() for cell in columns)]]
+    for block in (first, second):
+        label, colon, values = block.get('text', '').partition(':')
+        values = values.split(' / ')
+        if not colon or not label.strip() or len(values) != 2 or not all(cell.strip() for cell in values): return None
+        cells.append([label.strip(), *(cell.strip() for cell in values)])
+    return cells
+
+def comparison_table(cells):
+    body_style = ParagraphStyle('ComparisonCell', parent=STYLES['paragraph'], fontSize=10.5,
+        leading=14.5, spaceAfter=0, allowWidows=1, allowOrphans=1)
+    label_style = ParagraphStyle('ComparisonLabel', parent=body_style, fontName='GXB', fontSize=10,
+        leading=14, textColor=NAVY)
+    rows = [[Paragraph(escape(plain(value)).replace('\n', '<br/>'),
+        label_style if row == 0 or column == 0 else body_style)
+        for column, value in enumerate(values)] for row, values in enumerate(cells)]
+    column_width = (W - 96 - 95) / 2
+    table = Table(rows, colWidths=[95, column_width, column_width], repeatRows=1,
+        hAlign='LEFT', spaceBefore=5, spaceAfter=16)
+    table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 10), ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#EAF2F6')),
+        ('BACKGROUND', (0, 2), (-1, 2), HexColor('#F7F9FA')),
+        ('LINEBELOW', (0, 0), (-1, 0), .8, NAVY),
+        ('LINEBELOW', (0, 1), (-1, -1), .5, LINE),
+    ]))
+    return table
+
+def source_note_after(blocks, table_indices):
+    candidates = [index for index, block in enumerate(blocks)
+        if index not in table_indices and block.get('type') == 'paragraph'
+        and len(block.get('text', '').strip()) >= 100
+        and not block.get('text', '').rstrip().endswith((':', '\uFF1A'))]
+    if not candidates: return None
+    midpoint = (len(blocks) - 1) / 2
+    return min(candidates, key=lambda index: (abs(index - midpoint), index))
+
+def source_note(edition):
+    text = (f"Source and edition note: {edition['sourceName']}, {edition['sourceDate']}. "
+        'GateX provides the authorized English translation and editorial presentation. '
+        'The original argument, examples and qualifications are preserved; the views remain those of the source author.')
+    if 'agentic' in edition['id']:
+        text += ' The publisher\'s commentary frames a reproduced essay by Junyang Lin; these are distinct authorial contributions.'
+    if edition.get('sourceUrl'):
+        text += ' Original publication: ' + edition['sourceUrl']
+    return [Spacer(1, 5), Paragraph(escape(plain(text)), STYLES['note'])]
+
 def story(edition):
     items = [Spacer(1, 1), PageBreak()]
-    note_at = max(0, len(edition['blocks']) // 2 - 1)
-    for index, block in enumerate(edition['blocks']):
+    blocks = edition['blocks']
+    tables = {index: cells for index in range(1, len(blocks))
+        if (cells := comparison_table_cells(blocks, index)) is not None}
+    table_indices = {index + offset for index in tables for offset in range(3)}
+    note_at = source_note_after(blocks, table_indices)
+    index = 0
+    while index < len(blocks):
+        block = blocks[index]
+        if index in tables:
+            items.append(comparison_table(tables[index]))
+            index += 3
+            continue
         if block['type'] == 'divider':
             items.extend([Spacer(1, 6), Paragraph('* * *', STYLES['note'])])
         else:
@@ -109,14 +181,9 @@ def story(edition):
             if block['type'] == 'bullet': text = '- ' + text
             items.append(Paragraph(text, STYLES[block['type']]))
         if index == note_at:
-            source_note = (f"Source and edition note: {edition['sourceName']}, {edition['sourceDate']}. "
-                'GateX provides the authorized English translation and editorial presentation. '
-                'The original argument, examples and qualifications are preserved; the views remain those of the source author.')
-            if 'agentic' in edition['id']:
-                source_note += ' The publisher\'s commentary frames a reproduced essay by Junyang Lin; these are distinct authorial contributions.'
-            if edition.get('sourceUrl'):
-                source_note += ' Original publication: ' + edition['sourceUrl']
-            items.extend([Spacer(1, 5), Paragraph(escape(plain(source_note)), STYLES['note'])])
+            items.extend(source_note(edition))
+        index += 1
+    if note_at is None: items.extend(source_note(edition))
     items.extend([PageBreak(), Paragraph('DISCLAIMER & IMPORTANT INFORMATION', STYLES['heading'])])
     for title, body in DISCLAIMER_PARAGRAPHS:
         items.append(Paragraph('<b>' + escape(title) + '.</b> ' + escape(plain(body)), STYLES['disclaimer']))
