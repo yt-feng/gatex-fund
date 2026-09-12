@@ -114,7 +114,7 @@ def model_call(system, payload):
     base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
     if not base.endswith('/v1'): base += '/v1'
     return parse_model_json(request_json(base + '/chat/completions', token, {
-        'model': MODEL, 'temperature': 0.1, 'max_tokens': 12000,
+        'model': MODEL, 'stream': False, 'temperature': 0.1, 'max_tokens': 12000,
         'response_format': {'type': 'json_object'},
         'messages': [{'role': 'system', 'content': system},
                      {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]}))

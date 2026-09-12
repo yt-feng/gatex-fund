@@ -50,3 +50,7 @@ python3 scripts/test_technology_frontiers_daily.py
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m snapshot_pipeline.cli guard --root .
 ```
+
+The APIMart `/v1/chat/completions` route defaults to streaming, so the adapter
+explicitly requests `stream: false` for its validated JSON responses. See the
+[provider reference](https://docs.apimart.ai/en/api-reference/texts/general/chat-completions).

@@ -93,6 +93,11 @@ class DailyEditionTests(unittest.TestCase):
         error=daily.HTTPError('https://example.test',403,'Denied',{'content-type':'text/plain','server':'cloudflare'},io.BytesIO(b'error code: 1010'))
         self.assertEqual(daily.failure_status(daily.service_failure(error)),' http_status=403 failure_scope=edge edge_code=1010')
 
+    def test_model_explicitly_requests_nonstreaming_json(self):
+        with patch.dict(daily.os.environ, {'GATEX_MODEL_CREDENTIAL':'fixture'}), patch.object(daily,'request_json',return_value={'choices':[{'message':{'content':'{"ok":true}'},'finish_reason':'stop'}]}) as request:
+            self.assertEqual(daily.model_call('Return JSON',{'example':True}),{'ok':True})
+        self.assertIs(request.call_args.args[2]['stream'],False)
+
     def test_batch_path_escape_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))
