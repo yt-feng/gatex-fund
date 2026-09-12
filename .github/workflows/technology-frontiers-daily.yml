@@ -1,0 +1,58 @@
+name: technology-frontiers-daily
+
+on:
+  schedule:
+    - cron: "15 4 * * *"
+  workflow_run:
+    workflows: [scheduled-snapshot]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum pending editions in this run
+        default: "5"
+        type: choice
+        options: ["1", "3", "5", "10"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gatex-technology-frontiers-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ vars.ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION == 'true' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted publication code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install PDF runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-liberation2 poppler-utils
+          python3 -m pip install --disable-pip-version-check -r requirements-technology-frontiers.txt
+      - name: Validate editorial pipeline
+        run: python3 scripts/test_technology_frontiers_daily.py
+      - name: Translate, render and publish complete editions
+        env:
+          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
+          GATEX_MODEL_CREDENTIAL: ${{ secrets.APIMART_API_KEY }}
+          GATEX_TRANSLATION_MODEL: ${{ vars.GATEX_TRANSLATION_MODEL || 'gpt-4o-mini' }}
+          EDITION_LIMIT: ${{ inputs.limit || '5' }}
+        run: |
+          umask 077
+          python3 scripts/technology_frontiers_daily.py publish --limit "$EDITION_LIMIT" --runtime "$RUNNER_TEMP/gatex-editions"
+      - name: Remove private working files
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/gatex-editions"

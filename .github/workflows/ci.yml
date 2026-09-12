@@ -20,7 +20,9 @@ jobs:
       - name: Run offline tests
         env:
           PYTHONPATH: src
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 scripts/test_technology_frontiers_daily.py
       - name: Validate public tree
         env:
           PYTHONPATH: src

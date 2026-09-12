@@ -178,6 +178,14 @@ if [[ "$intake_mode" == "dry-run" ]]; then
   exit 0
 fi
 
+# Queue authorized complete editions independently from the generic intake job.
+# A failed durable enqueue leaves the source checkpoint untouched for replay.
+if [[ "$new_count" -gt 0 && "${ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION:-false}" == "true" ]]; then
+  GATEX_INTELLIGENCE_INTAKE_SECRET="$intake_secret" \
+    python3 "$repo_root/scripts/technology_frontiers_daily.py" enqueue \
+      --batch "$work_dir/run/batch"
+fi
+
 if [[ "$state_changed" == "1" ]]; then
   "$age_bin" -R "$repo_root/recipients/runtime-recipient.txt" -o "$work_dir/checkpoint.json.age" "$work_dir/state.next.json"
   mv "$work_dir/checkpoint.json.age" "$profile_root/checkpoint.json.age"

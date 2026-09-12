@@ -39,6 +39,9 @@ jobs:
           PYTHONPATH: src
           RUNTIME_AGE_IDENTITY: ${{ secrets.RUNTIME_AGE_IDENTITY }}
           EGRESS_PROXY_URI: ${{ secrets.EGRESS_PROXY_URI }}
+          ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION: ${{ vars.ENABLE_TECHNOLOGY_FRONTIERS_PUBLICATION }}
+          GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256: ${{ vars.GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256 }}
+          GATEX_INTELLIGENCE_INTAKE_SECRET: ${{ secrets.GATEX_INTELLIGENCE_INTAKE_SECRET }}
         run: xvfb-run -a bash scripts/run_scheduled.sh
       - name: Upload sealed diagnostic
         if: ${{ failure() }}
