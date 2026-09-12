@@ -618,7 +618,7 @@ class TikHubBackfillTests(unittest.TestCase):
                     "nick_name": "Synthetic Publisher",
                     "alias": "synthetic_alias",
                     "title": candidate.title,
-                    "content_text": "First passage\n\nSecond passage",
+                    "content_text": "First passage\n\nSecond passage\n\n",
                     "content_url": candidate.source_url,
                     "mid": "2247485001",
                     "idx": 1,

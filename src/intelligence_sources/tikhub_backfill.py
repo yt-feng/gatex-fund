@@ -473,6 +473,11 @@ def _technology_source_from_detail(
         raise BackfillError("article content is invalid")
     article_text = article_text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
     lines = article_text.split("\n")
+    # TikHub often terminates article text with a newline. The source
+    # contract carries meaningful article lines only, so discard trailing
+    # blank lines before translation coverage is checked.
+    while lines and not lines[-1].strip():
+        lines.pop()
     if not any(line.strip() for line in lines) or len(lines) > 2000:
         raise BackfillError("article content is invalid")
     if any(len(line) > 100000 for line in lines):
@@ -487,7 +492,10 @@ def _technology_source_from_detail(
         except ValueError:
             published = candidate.published_at
     if isinstance(published, (int, float)) or (isinstance(published, str) and published.isdigit()):
-        published = datetime.fromtimestamp(int(published), tz=timezone.utc).isoformat()
+        stamp = int(published)
+        if stamp > 100_000_000_000:
+            stamp //= 1000
+        published = datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat()
     published_date = str(published)[:10]
     try:
         datetime.fromisoformat(published_date)
