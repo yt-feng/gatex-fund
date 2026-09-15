@@ -36,6 +36,25 @@ class DailyEditionTests(unittest.TestCase):
     def test_truncated_response_rejected(self):
         with self.assertRaises(ValueError): daily.parse_model_json({'choices':[{'finish_reason':'length','message':{'content':'{}'}}]})
 
+    def test_malformed_model_envelope_is_a_validation_failure(self):
+        responses=[None, [], {'choices':None}, {'choices':{}}, {'choices':[]}]
+        responses += [{'choices':[choice]} for choice in (None, [], 'choice', 1)]
+        responses += [{'choices':[{'message':message}]} for message in (None, [], {'content':{}}, {'content':'[]'})]
+        for response in responses:
+            with self.subTest(response=response), self.assertRaises(ValueError):
+                daily.parse_model_json(response)
+
+    def test_malformed_translated_blocks_are_validation_failures(self):
+        valid={'type':'paragraph','sourceLines':[1,1],'text':'Complete text.'}
+        malformed=[None, {}, 'blocks', [None], [[]], ['block']]
+        malformed += [[{**valid,'type':value}] for value in (None, [], {})]
+        malformed += [[{**valid,'text':value}] for value in (None, [], {}, 1, True)]
+        malformed += [[{**valid,'sourceLines':value}] for value in (None, '1,1', [1], [True,1], [1,1.0], [0,1], [1,2])]
+        malformed += [[{'type':'divider','sourceLines':[1,1],'text':None}]]
+        for blocks in malformed:
+            with self.subTest(blocks=blocks), self.assertRaises(ValueError):
+                daily.validate_blocks(blocks,1)
+
     def test_existing_translation_reused_without_model_or_writes(self):
         saved = {'title':'Title','reviewVersion':'faithful-v1','blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Body'}]}
         with patch.object(daily,'model_call',side_effect=AssertionError('must not call')), patch.object(daily,'api',side_effect=AssertionError('must not write')):
@@ -125,6 +144,131 @@ class DailyEditionTests(unittest.TestCase):
             result=daily.translate({'id':'sample','title':'Title','lines':['source']})
         self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
         self.assertEqual(len(result['blocks']),1)
+
+    def test_translation_recovers_malformed_blocks_before_checkpointing(self):
+        valid={'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Complete translation.'}]}
+        invalid_responses=[{'blocks':None}, {'blocks':{}}, {'blocks':[None]},
+            {'blocks':[{'type':[],'sourceLines':[1,1],'text':'Body'}]},
+            {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':None}]}]
+        for invalid in invalid_responses:
+            with self.subTest(invalid=invalid), patch.object(daily,'model_call',side_effect=[invalid,valid,
+                {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, \
+                patch.object(daily,'api',return_value={'ok':True}) as api, \
+                patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
+                result=daily.translate({'id':'sample','title':'Source','lines':['source']})
+            self.assertEqual(model.call_count,3)
+            self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
+            self.assertEqual(result['blocks'],valid['blocks'])
+            api.assert_called_once_with('/sources/sample/progress',{'translationBlocks':valid['blocks']})
+
+    def test_translation_heading_recovers_without_retranslating_saved_body(self):
+        blocks=[{'type':'paragraph','sourceLines':[1,1],'text':'Complete translation.'}]
+        valid={'title':'  Clear title  ','listingDescription':'  Factual description.  ','artDirection':'  Existing concept  '}
+        invalid_responses=[ValueError('Model content is not valid JSON'), {},
+            {**valid,'artDirection':' '}, {**valid,'title':'T'*201},
+            {**valid,'listingDescription':'D'*181}, {**valid,'title':'\u4e2d\u6587'},
+            {**valid,'listingDescription':'Untranslated \u4e2d\u6587'}]
+        for invalid in invalid_responses:
+            with self.subTest(invalid=invalid), patch.object(daily,'model_call',side_effect=[invalid,valid]) as model, \
+                patch.object(daily,'api') as api, patch.object(daily,'review_translation',side_effect=lambda source,draft:draft) as review:
+                result=daily.translate({'id':'sample','title':'Source','lines':['source'],
+                    'progress':{'translationBlocks':blocks}})
+            self.assertEqual(model.call_count,2)
+            self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
+            self.assertEqual(result,{'title':'Clear title','listingDescription':'Factual description.',
+                'artDirection':'Existing concept','blocks':blocks})
+            api.assert_not_called()
+            review.assert_called_once()
+
+    def test_review_heading_recovers_without_repeating_review_or_changing_art(self):
+        blocks=[{'type':'paragraph','sourceLines':[1,1],'text':'Original translation.'}]
+        source={'id':'sample','title':'Source','lines':['source']}
+        draft={'title':'Draft','listingDescription':'Draft summary.','artDirection':'Existing concept','blocks':blocks}
+        edits={'blocks':[{'blockId':1,'text':'Corrected complete translation.'}]}
+        valid={'title':'  Clear title  ','listingDescription':'  Factual description.  '}
+        invalid_responses=[ValueError('Model content is not valid JSON'), {}, {**valid,'title':None},
+            {**valid,'title':'T'*201}, {**valid,'listingDescription':'D'*181},
+            {**valid,'title':'\u4e2d\u6587'}, {**valid,'listingDescription':'Untranslated \u4e2d\u6587'}]
+        for invalid in invalid_responses:
+            with self.subTest(invalid=invalid), patch.object(daily,'model_call',side_effect=[edits,invalid,valid]) as model, \
+                patch.object(daily,'api',return_value={'ok':True}) as api:
+                result=daily.review_translation(source,draft)
+            self.assertEqual(model.call_count,3)
+            self.assertEqual(model.call_args_list[1].args[1],model.call_args_list[2].args[1])
+            self.assertEqual(result['blocks'][0]['text'],'Corrected complete translation.')
+            self.assertEqual(result['title'],'Clear title')
+            self.assertEqual(result['listingDescription'],'Factual description.')
+            self.assertEqual(result['artDirection'],'Existing concept')
+            self.assertEqual(result['reviewVersion'],'faithful-v1')
+            self.assertEqual(blocks[0]['text'],'Original translation.')
+            api.assert_called_once_with('/sources/sample/progress',{'translation':result})
+
+    def test_heading_retry_exhaustion_preserves_progress_without_accepting_invalid_output(self):
+        source={'id':'sample','title':'Source','lines':['source']}
+        blocks=[{'type':'paragraph','sourceLines':[1,1],'text':'Complete translation.'}]
+        draft={'title':'Draft','listingDescription':'Draft summary.','artDirection':'Existing concept','blocks':blocks}
+        with patch.object(daily,'model_call',side_effect=[{'blocks':blocks},{},{},{}]) as model, \
+            patch.object(daily,'api',return_value={'ok':True}) as api, patch.object(daily,'review_translation') as review:
+            with self.assertRaisesRegex(ValueError,'Missing edition heading'): daily.translate(source)
+        self.assertEqual(model.call_count,4)
+        self.assertTrue(all('translatedArticle' in call.args[1] for call in model.call_args_list[1:]))
+        api.assert_called_once_with('/sources/sample/progress',{'translationBlocks':blocks})
+        review.assert_not_called()
+        with patch.object(daily,'model_call',side_effect=[{'blocks':[{'blockId':1,'text':'Reviewed translation.'}]},{},{},{}]) as model, \
+            patch.object(daily,'api') as api:
+            with self.assertRaisesRegex(ValueError,'Missing edition heading'): daily.review_translation(source,draft)
+        self.assertEqual(model.call_count,4)
+        self.assertTrue(all('draftTitle' in call.args[1] for call in model.call_args_list[1:]))
+        api.assert_not_called()
+        self.assertNotIn('reviewVersion',draft)
+        self.assertEqual(draft['blocks'],blocks)
+        self.assertEqual(draft['blocks'][0]['text'],'Complete translation.')
+
+    def test_model_content_retries_do_not_repeat_service_or_programming_failures(self):
+        errors=[RuntimeError('Credential unavailable'), daily.ServiceFailure(403,'service'),
+            TypeError('Programming failure'), AttributeError('Programming failure'),
+            ValueError('Unexpected validator failure'), json.JSONDecodeError('Service JSON failure','{',0)]
+        for error in errors:
+            for failure_source in ('model','validator'):
+                with self.subTest(error=type(error).__name__,failure_source=failure_source), \
+                    patch.object(daily,'model_call',side_effect=error if failure_source=='model' else None,return_value={}) as model:
+                    def validator(value):
+                        if failure_source=='validator': raise error
+                        return value
+                    with self.assertRaises(type(error)) as raised:
+                        daily.validated_model_call('Return JSON',{'source':'unchanged'},validator,'test-validation')
+                self.assertIs(raised.exception,error)
+                model.assert_called_once()
+        source={'id':'sample','title':'Source','lines':['first','second']}
+        draft={'title':'Draft','listingDescription':'Summary.','artDirection':'Existing concept','blocks':[
+            {'type':'paragraph','sourceLines':[1,1],'text':'First translation.'},
+            {'type':'paragraph','sourceLines':[2,2],'text':'Second translation.'}]}
+        for error in errors[-2:]:
+            for phase,run in [('translation',lambda:daily.translate(source)),
+                ('review',lambda:daily.review_translation(source,draft))]:
+                with self.subTest(error=type(error).__name__,phase=phase), \
+                    patch.object(daily,'model_call',side_effect=error) as model, patch.object(daily,'api') as api:
+                    with self.assertRaises(type(error)) as raised: run()
+                self.assertIs(raised.exception,error)
+                model.assert_called_once()
+                api.assert_not_called()
+
+    def test_review_recovers_model_envelope_and_json_failures_on_identical_blocks(self):
+        source={'id':'sample','title':'Source','lines':['source']}
+        draft={'title':'Draft','listingDescription':'Summary.','artDirection':'Existing concept',
+            'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Original translation.'}]}
+        def envelope(content): return {'choices':[{'message':{'content':content},'finish_reason':'stop'}]}
+        responses=[{'choices':[None]}, envelope('{broken JSON'),
+            envelope(json.dumps({'blocks':[{'blockId':1,'text':'Corrected translation.'}]})),
+            envelope(json.dumps({'title':'Clear title','listingDescription':'Factual description.'}))]
+        with patch.dict(daily.os.environ,{'APIMART_API_KEY':'fixture'}), \
+            patch.object(daily,'request_json',side_effect=responses) as request, patch.object(daily,'api',return_value={'ok':True}) as api:
+            result=daily.review_translation(source,draft)
+        self.assertEqual(request.call_count,4)
+        first_payload=request.call_args_list[0].args[2]['messages'][1]['content']
+        self.assertTrue(all(call.args[2]['messages'][1]['content']==first_payload for call in request.call_args_list[:3]))
+        self.assertEqual(result['blocks'][0]['text'],'Corrected translation.')
+        api.assert_called_once_with('/sources/sample/progress',{'translation':result})
 
     def test_source_coverage_failure_splits_chunk_before_giving_up(self):
         invalid = {'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'Only first'}]}

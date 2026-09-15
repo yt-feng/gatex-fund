@@ -49,6 +49,27 @@ invalid cover or unreadable PDF prevents publication. An unfinished image task
 is reused by the next run. Completed reports are published only after the PDF
 and cover are stored and verified; replay preserves the first publication time.
 
+## Model response recovery
+
+Translation, fidelity review, title creation and title review all use the same
+validated response helper. Invalid model-content JSON, malformed choices or block fields,
+missing text and invalid headings receive up to three attempts with validation
+feedback. Block ranges are bounded to the supplied chunk before expanding
+coverage. Body translation and review then reduce the chunk size, down to one
+original source line or block. Invalid single-item output remains pending.
+
+Keep document identity, ordering, source ranges and publication state in code;
+ask the model only for the content it needs to edit. Validate before saving
+progress or calling a later paid stage. Never repair malformed output by
+dropping source content, accepting a summary or marking an incomplete review
+as complete. Service and credential failures are not model-structure errors and
+must not be retried by this content-repair helper. A failed edition does not
+stop later eligible queue items from being attempted.
+
+Use these rules for future model-driven publishing changes and add regressions
+for each new failure class. The GitHub workflow's checked-out publisher is the
+production implementation; older local copies are not release sources.
+
 The historical backfill additionally requires the existing sealed runtime
 identity and a `TIKHUB_WECHAT_TOKEN` repository secret authorized for the
 verified source-a profile, article-list, and article-detail endpoints. Without
