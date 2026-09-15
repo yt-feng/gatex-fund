@@ -39,8 +39,12 @@ The queue keeps ordered source lines, translated-block progress and independent
 image-task receipts privately. Every source line must appear once, in order, in
 the English edition. A second bilingual editorial pass checks terminology and
 qualifier scope against the unchanged source-line map before marking the private
-translation as reviewed. The renderer retains recognized comparison tables as
-native table cells. A truncated response, missing coverage, untranslated text,
+translation as reviewed. The editor returns complete corrected text keyed by
+stable block IDs; code retains each block's type and source-line range. Missing,
+duplicate or reordered IDs are rejected. After three invalid responses, the
+same review is retried in smaller groups of original blocks; an invalid
+single-block response still prevents publication. The renderer retains recognized
+comparison tables as native table cells. A truncated response, missing coverage, untranslated text,
 invalid cover or unreadable PDF prevents publication. An unfinished image task
 is reused by the next run. Completed reports are published only after the PDF
 and cover are stored and verified; replay preserves the first publication time.

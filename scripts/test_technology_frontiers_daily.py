@@ -143,7 +143,7 @@ class DailyEditionTests(unittest.TestCase):
         corrected=[{'type':'paragraph','sourceLines':[1,1],'text':'A discount for underestimated persistence.'}]
         draft={'title':'Old title','listingDescription':'Old summary.','artDirection':'Existing concept','blocks':original}
         source={'id':'sample','title':'Source title','lines':['source'], 'progress':{'translation':draft,'coverTask':{'taskId':'saved-task'}}}
-        with patch.object(daily,'model_call',side_effect=[{'blocks':corrected},{'title':' Clear title ','listingDescription':'Faithful description.'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
+        with patch.object(daily,'model_call',side_effect=[{'blocks':[{'blockId':1,'text':corrected[0]['text']}]},{'title':' Clear title ','listingDescription':'Faithful description.'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
             result=daily.translate(source)
         self.assertEqual(model.call_count,2)
         self.assertEqual(result['blocks'],corrected)
@@ -159,7 +159,100 @@ class DailyEditionTests(unittest.TestCase):
         draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
         with patch.object(daily,'model_call',return_value=merged) as model, patch.object(daily,'api') as api:
             with self.assertRaisesRegex(ValueError,'Review changed the source block map'): daily.review_translation(source,draft)
-        self.assertEqual(model.call_count,3)
+        self.assertEqual(model.call_count,6)
+        api.assert_not_called()
+
+    def test_review_preserves_multiline_blocks_and_blank_dividers(self):
+        original=[{'type':'heading','sourceLines':[1,2],'text':'Original heading.'},
+            {'type':'divider','sourceLines':[3,3],'text':''},
+            {'type':'note','sourceLines':[4,4],'text':'Original closing note.'}]
+        source={'id':'sample','title':'Source','lines':['first heading line','second heading line','','closing note']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
+        edits={'blocks':[{'blockId':1,'type':'divider','sourceLines':[1,4],'text':'Complete corrected heading.'},
+            {'blockId':2,'text':''},{'blockId':3,'text':'Complete corrected closing note.'}]}
+        heading={'title':'Title','listingDescription':'Description.'}
+        with patch.object(daily,'model_call',side_effect=[edits,heading]) as model, patch.object(daily,'api',return_value={'ok':True}):
+            result=daily.review_translation(source,draft)
+        self.assertEqual([(b['type'],b['sourceLines']) for b in result['blocks']],
+            [('heading',[1,2]),('divider',[3,3]),('note',[4,4])])
+        self.assertEqual([b['text'] for b in result['blocks']], [b['text'] for b in edits['blocks']])
+        self.assertEqual(model.call_args_list[0].args[1]['draftBlocks'],
+            [{**block,'blockId':index+1} for index,block in enumerate(original)])
+        self.assertEqual(model.call_args_list[0].args[1]['sourceLines'],
+            [{'line':index+1,'text':line} for index,line in enumerate(source['lines'])])
+        self.assertEqual(original[0]['text'],'Original heading.')
+        self.assertEqual(original[2]['text'],'Original closing note.')
+
+    def test_review_retries_missing_duplicate_reordered_and_foreign_block_ids(self):
+        original=[{'type':'paragraph','sourceLines':[1,1],'text':'First.'},
+            {'type':'paragraph','sourceLines':[2,2],'text':'Second.'}]
+        source={'id':'sample','title':'Source','lines':['first','second']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
+        valid={'blocks':[{'blockId':1,'text':'First corrected.'},{'blockId':2,'text':'Second corrected.'}]}
+        invalid_responses=[
+            {'blocks':[{'blockId':1,'text':'First corrected.'}]},
+            {'blocks':[{'text':'First corrected.'},{'blockId':2,'text':'Second corrected.'}]},
+            {'blocks':[{'blockId':1,'text':'First corrected.'},{'blockId':1,'text':'Second corrected.'}]},
+            {'blocks':[{'blockId':2,'text':'Second corrected.'},{'blockId':1,'text':'First corrected.'}]},
+            {'blocks':[{'blockId':1,'text':'First corrected.'},{'blockId':3,'text':'Foreign.'}]},
+            {'blocks':[{'blockId':True,'text':'First corrected.'},{'blockId':2,'text':'Second corrected.'}]},
+        ]
+        for invalid in invalid_responses:
+            with self.subTest(invalid=invalid), patch.object(daily,'model_call',side_effect=[invalid,valid,
+                {'title':'Title','listingDescription':'Description.'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
+                result=daily.review_translation(source,draft)
+            self.assertEqual(model.call_count,3)
+            self.assertEqual(model.call_args_list[0].args[1],model.call_args_list[1].args[1])
+            self.assertEqual([b['text'] for b in result['blocks']],['First corrected.','Second corrected.'])
+            self.assertEqual(api.call_count,1)
+
+    def test_review_structure_failure_splits_without_losing_global_block_ids(self):
+        original=[{'type':'paragraph','sourceLines':[1,2],'text':'First complete block.'},
+            {'type':'note','sourceLines':[3,3],'text':'Closing block.'}]
+        source={'id':'sample','title':'Source','lines':['first','continued','closing']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
+        invalid={'blocks':[{'blockId':1,'text':'Only one block.'}]}
+        responses=[invalid,invalid,invalid,{'blocks':[{'blockId':1,'text':'First corrected block.'}]},
+            {'blocks':[{'blockId':2,'text':'Corrected closing block.'}]},
+            {'title':'Title','listingDescription':'Description.'}]
+        with patch.object(daily,'model_call',side_effect=responses) as model, patch.object(daily,'api',return_value={'ok':True}) as api:
+            result=daily.review_translation(source,draft)
+        self.assertEqual(model.call_count,6)
+        self.assertEqual([b['blockId'] for b in model.call_args_list[3].args[1]['draftBlocks']],[1])
+        self.assertEqual([b['blockId'] for b in model.call_args_list[4].args[1]['draftBlocks']],[2])
+        self.assertEqual(model.call_args_list[3].args[1]['sourceLines'],
+            [{'line':1,'text':'first'},{'line':2,'text':'continued'}])
+        self.assertEqual(model.call_args_list[4].args[1]['sourceLines'],[{'line':3,'text':'closing'}])
+        self.assertEqual([b['sourceLines'] for b in result['blocks']],[[1,2],[3,3]])
+        self.assertEqual([b['text'] for b in result['blocks']],['First corrected block.','Corrected closing block.'])
+        self.assertEqual(api.call_count,1)
+
+    def test_review_single_block_failure_never_saves_or_requests_heading(self):
+        original=[{'type':'paragraph','sourceLines':[1,1],'text':'Original complete translation.'}]
+        source={'id':'sample','title':'Source','lines':['meaningful source']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual','blocks':original}
+        cases=[
+            ({'blocks':[{'blockId':2,'text':'Foreign block.'}]},'Review changed the source block map'),
+            ({'blocks':[{'blockId':1,'text':None}]},'Invalid reviewed block text'),
+            ({'blocks':[{'blockId':1,'text':''}]},'Translation is empty'),
+            ({'blocks':[{'blockId':1,'text':'Untranslated \u4e2d\u6587'}]},'Untranslated body text remains'),
+        ]
+        for response,message in cases:
+            with self.subTest(message=message), patch.object(daily,'model_call',return_value=response) as model, patch.object(daily,'api') as api:
+                with self.assertRaisesRegex(ValueError,message): daily.review_translation(source,draft)
+            self.assertEqual(model.call_count,3)
+            self.assertTrue(all('draftBlocks' in call.args[1] for call in model.call_args_list))
+            api.assert_not_called()
+            self.assertEqual(original[0]['text'],'Original complete translation.')
+            self.assertNotIn('reviewVersion',draft)
+
+    def test_review_rejects_incomplete_original_draft_before_model_or_save(self):
+        source={'id':'sample','title':'Source','lines':['first','second']}
+        draft={'title':'Title','listingDescription':'Summary','artDirection':'Visual',
+            'blocks':[{'type':'paragraph','sourceLines':[1,1],'text':'First only.'}]}
+        with patch.object(daily,'model_call') as model, patch.object(daily,'api') as api:
+            with self.assertRaisesRegex(ValueError,'Source coverage is incomplete'): daily.review_translation(source,draft)
+        model.assert_not_called()
         api.assert_not_called()
 
     def test_batch_path_escape_rejected(self):
