@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import os
 import re
@@ -54,18 +55,24 @@ def _validate_result(result: Any, batch_dir: Path) -> dict[str, Any]:
     state = result.get("state")
     new_count = result.get("new_count")
     discovered_count = result.get("discovered_count")
+    deferred_count = result.get("deferred_count", 0)
     if not isinstance(state, dict):
         raise RuntimeError("provider returned an invalid state")
-    if not isinstance(new_count, int) or new_count < 0:
+    if type(new_count) is not int or new_count < 0:
         raise RuntimeError("provider returned an invalid new-item count")
-    if not isinstance(discovered_count, int) or discovered_count < new_count:
+    if type(discovered_count) is not int or discovered_count < new_count:
         raise RuntimeError("provider returned an invalid discovery count")
+    if type(deferred_count) is not int or deferred_count < 0:
+        raise RuntimeError("provider returned an invalid deferred count")
+    if deferred_count and not new_count:
+        raise RuntimeError("provider deferred collection without completed new items")
     if new_count and not batch_dir.is_dir():
         raise RuntimeError("provider did not materialize the batch")
     return {
         "state": state,
         "new_count": new_count,
         "discovered_count": discovered_count,
+        "deferred_count": deferred_count,
     }
 
 
@@ -84,6 +91,7 @@ def run_pipeline(
     state = load_json(state_path)
     if not isinstance(config, dict) or not isinstance(state, dict):
         raise RuntimeError("runtime payload is invalid")
+    original_state = copy.deepcopy(state)
     token_env = config.get("token_env")
     token: str | None = None
     if token_env is not None:
@@ -116,12 +124,20 @@ def run_pipeline(
     public_result = {
         "new_count": result["new_count"],
         "discovered_count": result["discovered_count"],
-        "state_changed": result["state"] != state,
+        "deferred_count": result["deferred_count"],
+        "status": "partial" if result["deferred_count"] else "ok",
+        "state_changed": result["state"] != original_state,
         "batch_path": str(batch_dir) if result["new_count"] else "",
     }
+    if result["deferred_count"]:
+        public_result["failure_class"] = "captcha"
     atomic_write_json(result_path, public_result)
+    deferred_log = (
+        f" deferred_count={result['deferred_count']} failure_class=captcha"
+        if result["deferred_count"] else ""
+    )
     print(
-        f"stage=run status=ok count={result['new_count']}",
+        f"stage=run status={public_result['status']} count={result['new_count']}{deferred_log}",
         flush=True,
     )
     return result["new_count"]

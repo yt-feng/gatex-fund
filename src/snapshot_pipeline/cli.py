@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "run":
+            # A validated partial batch still needs the caller to seal and
+            # persist its completed items; its result records deferred work.
             run_pipeline(
                 config_path=args.config,
                 provider_path=args.provider,
@@ -65,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "pack":
             identifier = deterministic_tar(args.source, args.output)
             args.id_file.write_text(identifier + "\n", encoding="ascii")
-            print("stage=run status=ok count=1")
+            print("stage=pack status=ok count=1")
             return 0
         if args.command == "guard":
             return guard_public_tree(args.root, args.config)
