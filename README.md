@@ -24,6 +24,17 @@ workflow. Its daily schedule is gated by the `ENABLE_SNAPSHOT` repository
 variable and remains disabled when that variable is absent. A separate CI
 workflow performs synthetic offline tests on every source change.
 
+When a later discovery candidate requires verification, complete articles
+already fetched can be saved as a partial batch. The encrypted checkpoint
+advances only for articles whose identity, content, and assets are complete;
+deferred candidates stay eligible for a later run. After the batch and
+checkpoint are committed, the workflow reports a `partial` outcome with a
+warning and deferred count. Verification blocks with no completed new items,
+and other collection or persistence failures, still fail explicitly.
+Resuming a partial batch bypasses the known-article early stop. Discovered
+articles beyond the per-run limit retain stable pending identities until
+completed, even when temporarily absent from a later discovery page.
+
 An additional encrypted profile may run through the pinned
 `secondary-snapshot` workflow. It uses a separate checkpoint and vault, runs
 in archive-only mode, and shares the same non-cancelling concurrency group as

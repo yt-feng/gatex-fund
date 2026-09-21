@@ -161,6 +161,18 @@ PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli run \
 
 new_count="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["new_count"]))' "$work_dir/result.json")"
 state_changed="$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["state_changed"] else "0")' "$work_dir/result.json")"
+deferred_count="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("deferred_count", 0))' "$work_dir/result.json")"
+
+report_snapshot_outcome() {
+  if [[ "$deferred_count" -gt 0 ]]; then
+    echo "::warning::Snapshot saved $new_count complete items; $deferred_count candidate(s) deferred by captcha. Collection is partial and will retry from the saved checkpoint."
+    echo "stage=run status=partial count=$new_count deferred_count=$deferred_count failure_class=captcha"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+      printf 'Snapshot outcome: **partial**. Saved %s complete items; %s candidate(s) deferred (captcha). Pending candidates remain eligible for the next run.\n' \
+        "$new_count" "$deferred_count" >> "$GITHUB_STEP_SUMMARY"
+    fi
+  fi
+}
 
 if [[ "$new_count" -gt 0 && "$intake_mode" != "off" ]]; then
   PYTHONPATH="$repo_root/src" python3 -m intelligence_sources.cli export-batch \
@@ -216,6 +228,7 @@ PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli guard \
 git -C "$repo_root" add -- "$checkpoint_relative" "$vault_relative"
 if git -C "$repo_root" diff --cached --quiet; then
   echo "stage=state status=empty count=0"
+  report_snapshot_outcome
   exit 0
 fi
 
@@ -224,3 +237,4 @@ git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.gith
 git -C "$repo_root" commit -m "snapshot: update sealed ledger" -- "$checkpoint_relative" "$vault_relative"
 git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"
 echo "stage=state status=ok count=$new_count"
+report_snapshot_outcome
