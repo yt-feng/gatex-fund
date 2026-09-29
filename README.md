@@ -31,6 +31,12 @@ deferred candidates stay eligible for a later run. After the batch and
 checkpoint are committed, the workflow reports a `partial` outcome with a
 warning and deferred count. Verification blocks with no completed new items,
 and other collection or persistence failures, still fail explicitly.
+The primary and secondary archive profiles share one generic provider release.
+When upgrading it, update both `sealed/provider-overlay.py.age` and
+`sealed/archive-sources/source-b/provider-overlay.py.age` with the same verified
+encrypted provider. Keep their configurations and checkpoints separate. CI
+checks that these two provider files match; separate intelligence adapters are
+outside this contract.
 Resuming a partial batch bypasses the known-article early stop. Discovered
 articles beyond the per-run limit retain stable pending identities until
 completed, even when temporarily absent from a later discovery page.
