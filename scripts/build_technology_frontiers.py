@@ -12,6 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
+from stock_photo_assets import photo_caption
 from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,10 +73,12 @@ def page_art(c, doc, edition, total=None):
     c.saveState()
     if doc.page == 1:
         c.setFillColor(NAVY); c.rect(0, 0, W, H, fill=1, stroke=0)
-        art = ImageReader(str(CONTENT / 'covers' / (edition['id'] + '.jpg')))
-        aw, ah = art.getSize(); scale = max(W / aw, H / ah)
-        c.drawImage(art, (W - aw * scale) / 2, (H - ah * scale) / 2,
-            width=aw * scale, height=ah * scale)
+        art_path = CONTENT / 'covers' / (edition['id'] + '.jpg')
+        if art_path.is_file() and (edition.get('coverGeneration') or {}).get('provider') != 'native':
+            art = ImageReader(str(art_path))
+            aw, ah = art.getSize(); scale = max(W / aw, H / ah)
+            c.drawImage(art, (W - aw * scale) / 2, (H - ah * scale) / 2,
+                width=aw * scale, height=ah * scale)
         c.setFillColor(white); c.setFont('GXB', 23); c.drawString(48, H - 70, 'GATEX')
         c.setFont('GX', 9); c.drawString(48, H - 91, 'INTELLIGENCE')
         c.setStrokeColor(CYAN); c.line(48, H - 141, W - 48, H - 141)
@@ -83,6 +86,8 @@ def page_art(c, doc, edition, total=None):
         size = 39 if len(edition['title']) < 45 else 34
         y = draw_paragraph(c, edition['title'], 48, H - 216, W - 102, size, size + 5, white, 'GXS')
         if y < 290: raise ValueError('Cover title overlaps edition date')
+        if (edition.get('coverGeneration') or {}).get('provider') == 'stock':
+            c.setFillColor(NAVY); c.rect(0, 0, W, 106, fill=1, stroke=0)
         draw_paragraph(c, edition['sourceDate'], 48, 78, W - 96, 10, 15, HexColor('#C7DFEF'))
         c.setFillColor(white); c.setFont('GX', 8); c.drawString(48, 38, 'GATEX.FUND')
     else:
@@ -187,6 +192,9 @@ def story(edition):
             if block['type'] == 'bullet': text = '- ' + text
             items.append(Paragraph(text, STYLES[block['type']]))
         index += 1
+    credit = photo_caption((edition.get('coverGeneration') or {}).get('source'))
+    if credit:
+        items.append(Paragraph(escape(plain(credit)), STYLES['note']))
     items.extend([PageBreak(), Paragraph('DISCLAIMER & IMPORTANT INFORMATION', STYLES['heading'])])
     for title, body in disclaimer_paragraphs(edition):
         items.append(Paragraph('<b>' + escape(title) + '.</b> ' + escape(plain(body)), STYLES['disclaimer']))
@@ -243,8 +251,10 @@ def build(edition):
         'publisher': 'GateX Intelligence', 'sourceName': edition['sourceName'], 'sourceUrl': edition.get('sourceUrl', ''),
         'publishedAt': edition['publishedAt'], 'language': 'English', 'pageCount': pages,
         'coverImageUrl': '/images/technology-frontiers/' + edition['id'] + '-illustrated.jpg',
+        'coverStyle': 'full-page',
         'status': 'published', 'order': edition.get('order', 0),
         'fileName': path.name, 'objectKey': 'intelligence-content/files/' + edition['id'] + '/' + REVISION + '.pdf',
+        'coverImageSource': (edition.get('coverGeneration') or {}).get('source'),
         'byteSize': path.stat().st_size, 'createdAt': edition.get('createdAt', stamp), 'updatedAt': stamp,
     }
     path.with_suffix('.json').write_text(json.dumps(record, indent=2) + '\n')
