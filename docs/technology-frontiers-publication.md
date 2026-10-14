@@ -35,8 +35,8 @@ and configuration. The local Python adapter supports the old intake credential
 as a fallback for compatibility. It does not require storage-admin credentials.
 Its service path is `/api/integrations/technology-frontiers` on the GateX site.
 
-The queue keeps ordered source lines, translated-block progress and independent
-image-task receipts privately. Every source line must appear once, in order, in
+The queue keeps ordered source lines, translated-block progress and source-bound
+stock/native-cover receipts privately. Every source line must appear once, in order, in
 the English edition. A second bilingual editorial pass checks terminology and
 qualifier scope against the unchanged source-line map before marking the private
 translation as reviewed. The editor returns complete corrected text keyed by
@@ -45,8 +45,7 @@ duplicate or reordered IDs are rejected. After three invalid responses, the
 same review is retried in smaller groups of original blocks; an invalid
 single-block response still prevents publication. The renderer retains recognized
 comparison tables as native table cells. A truncated response, missing coverage, untranslated text,
-invalid cover or unreadable PDF prevents publication. An unfinished image task
-is reused by the next run. Completed reports are published only after the PDF
+invalid cover or unreadable PDF prevents publication. Existing valid local artwork is reused without new image calls. New covers use the reviewed public GateX stock catalogue and same-origin assets; unmatched topics use native title typography. Image selection makes no AI image calls. Author, licence, source links and crop information are retained in the PDF and publication receipt. Completed reports are published only after the PDF
 and cover are stored and verified; replay preserves the first publication time.
 
 ## Model response recovery
@@ -77,8 +76,7 @@ that secret the historical workflow remains fail-closed; new scheduled snapshots
 and already queued editions continue to use their own credentials.
 
 The PDF uses native typography, the full translated body, one editorial/source
-note inside the body and a detailed standalone final disclaimer page. Its cover
-art is text-free so the website can render accessible, responsive native titles.
+note inside the body and a detailed standalone final disclaimer page. Stock cover backgrounds remain text-free so the website can render accessible, responsive native titles. Native fallback covers are rendered from the original PDF title page and marked `full-page`. The public catalogue is `https://gatex.fund/images/stock/catalog.json`; no image supplier key is required.
 A disclaimer states the scope of the publication and does not override mandatory
 law or imply that every possible liability is excluded.
 

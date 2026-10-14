@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 SCHEMA = 'gatex-technology-source/v1'
 BASE = 'https://gatex.fund/api/integrations/technology-frontiers'
 MODEL = os.environ.get('GATEX_TRANSLATION_MODEL', 'gpt-4o-mini')
-ART_MODEL = 'gpt-image-2'
+ART_MODEL = 'licensed-stock-v1'
 CURRENT_STAGE = 'startup'
 CLIENT_NAME = 'GateX-Research-Publisher/1.0 (+https://gatex.fund)'
 ALLOWED_TYPES = {'paragraph', 'heading', 'subheading', 'bullet', 'note', 'divider'}
@@ -345,39 +345,47 @@ def cover_prompt(translation):
         'No generic AI brain or humanoid robot. Editorial concept: ' + translation['artDirection'].strip()).strip()
 
 def generated_art(source, translation, directory):
+    """Reuse an accepted local cover, else reviewed stock; no image provider calls."""
     from PIL import Image
-    refresh_cover = source.get('rebuild') is True
-    task = None if refresh_cover else (source.get('progress') or {}).get('coverTask')
-    token = os.environ.get('APIMART_API_KEY') or os.environ.get('GATEX_MODEL_CREDENTIAL', '')
-    art_base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
-    if art_base.endswith('/v1'): art_base = art_base[:-3]
-    if not task:
-        prompt = cover_prompt(translation)
-        response = request_json(art_base + '/v1/images/generations', token,
-            {'model': ART_MODEL, 'prompt': prompt, 'n': 1, 'size': '2:3', 'resolution': '1k'})
-        data = response.get('data'); data = data[0] if isinstance(data, list) else data
-        task_id = data.get('task_id') or data.get('id')
-        if not task_id: raise RuntimeError('Cover service returned no task')
-        task = {'taskId': task_id, 'provider': 'APIMart', 'model': ART_MODEL, 'prompt': prompt, 'promptSha256': digest(prompt)}
-        progress = {'coverTask': task}
-        if refresh_cover: progress['replaceCoverTask'] = True
-        api('/sources/' + source['id'] + '/progress', progress)
-    for _ in range(50):
-        result = request_json(art_base + '/v1/tasks/' + task['taskId'] + '?language=en', token)['data']
-        if result['status'] == 'failed': raise RuntimeError('Cover generation failed; receipt preserved for review')
-        if result['status'] == 'completed': break
-        time.sleep(12)
-    else: raise RuntimeError('Cover generation still pending; next run will reuse receipt')
-    image_url = result['result']['images'][0]['url']
-    if isinstance(image_url, list): image_url = image_url[0]
-    if not image_url.startswith('https://'): raise ValueError('Invalid generated asset URL')
-    with urlopen(Request(image_url, headers={'User-Agent': CLIENT_NAME, 'Accept': 'image/*'}), timeout=60) as response: blob = response.read(16*1024*1024+1)
-    if not 8000 < len(blob) <= 16*1024*1024: raise ValueError('Cover image is outside size limits')
-    image = Image.open(io.BytesIO(blob)).convert('RGB')
-    if image.width < 600 or image.height < 900: raise ValueError('Cover resolution is too small')
-    cover = directory / (source['id'] + '.jpg'); image.save(cover, quality=92, optimize=True)
-    return {**task, 'sha256': digest(cover.read_bytes()), 'bytes': cover.stat().st_size,
-        'width': image.width, 'height': image.height}
+    from stock_photo_assets import load_catalog, select_stock_photo, save_stock_photo, save_native_cover, STOCK_MODEL
+    directory = Path(directory); directory.mkdir(parents=True, exist_ok=True)
+    cover = directory / (source['id'] + '.jpg')
+    prior_task = (source.get('progress') or {}).get('coverTask') or {}
+    task = prior_task
+    saved = directory / 'manifest.json'
+    if saved.is_file():
+        records = json.loads(saved.read_text())
+        task = next((row for row in records if row.get('id') == source['id']), task)
+    if source.get('rebuild') is not True and cover.is_file() and task.get('taskId') and task.get('provider') in ('stock', 'native', 'APIMart'):
+        with Image.open(cover) as image:
+            image.load()
+            if image.width >= 600 and image.height >= 900:
+                sha = digest(cover.read_bytes())
+                if not task.get('sha256') or task['sha256'] == sha:
+                    return {**task, 'id': source['id'], 'sha256': sha, 'bytes': cover.stat().st_size,
+                            'width': image.width, 'height': image.height}
+    image, photo = None, None
+    try:
+        photo = select_stock_photo(translation['title'], load_catalog(),
+            summary=translation.get('listingDescription', ''), seed=source['id'])
+        if photo: image = save_stock_photo(photo, cover, size=(1200, 1800), portrait_cover=True)
+    except (OSError, ValueError):
+        # Missing/unavailable catalogue imagery still permits the native title cover.
+        pass
+    if image:
+        task = {'id': source['id'], 'taskId': 'stock1:' + photo['id'] + ':2:3',
+                'provider': 'stock', 'model': STOCK_MODEL, 'source': image['source']}
+        art = {**task, **image}
+    else:
+        # A stale local background must not be rendered under a new native receipt.
+        task = {'id': source['id'], 'taskId': 'native1:' + source['id'],
+                'provider': 'native', 'model': 'native-cover-v1', 'source': None}
+        art = {**task, **save_native_cover(translation['title'], cover)}
+    progress = {'coverTask': task}
+    if prior_task.get('taskId') and prior_task['taskId'] != task['taskId']:
+        progress['replaceCoverTask'] = True
+    api('/sources/' + source['id'] + '/progress', progress)
+    return art
 
 def upload_edition(metadata, pdf, cover):
     boundary = 'gatex-' + os.urandom(16).hex()
@@ -408,7 +416,8 @@ def produce(source, runtime):
     CURRENT_STAGE = 'pdf'
     edition = {**translation, 'id': source['id'], 'sourceName': 'Unsolved Problems',
         'sourceDate': datetime.fromisoformat(source['publishedAt'][:10]).strftime('%d %B %Y').lstrip('0'),
-        'publishedAt': source['publishedAt'][:10], 'sourceUrl': source.get('sourceUrl', ''), 'archive': source['id'] + '.txt'}
+        'publishedAt': source['publishedAt'][:10], 'sourceUrl': source.get('sourceUrl', ''), 'archive': source['id'] + '.txt',
+        'coverGeneration': art}
     (directory / (source['id'] + '.txt')).write_text('\n'.join(source['lines']) + '\n')
     (directory / (source['id'] + '.json')).write_text(json.dumps(edition))
     (art_dir / 'manifest.json').write_text(json.dumps([art]))
@@ -419,14 +428,22 @@ def produce(source, runtime):
     cover_prefix = directory / 'cover'
     subprocess.run(['pdftoppm', '-f', '1', '-singlefile', '-scale-to', '1600', '-jpeg', '-jpegopt', 'quality=90',
         str(pdf), str(cover_prefix)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    cover = art_dir / (source['id'] + '.jpg')
+    cover = cover_prefix.with_suffix('.jpg') if art['provider'] == 'native' else art_dir / (source['id'] + '.jpg')
+    from PIL import Image
+    with Image.open(cover) as image:
+        image.load()
+        art = {**art, 'sha256': digest(cover.read_bytes()), 'bytes': cover.stat().st_size,
+               'width': image.width, 'height': image.height}
+    (art_dir / 'manifest.json').write_text(json.dumps([art], ensure_ascii=False, indent=2) + '\n')
+    api('/sources/' + source['id'] + '/progress', {'coverTask': art})
     reader = PdfReader(pdf)
     if len(reader.pages) < 3: raise ValueError('Edition must have cover, body and separate disclaimer')
     metadata = {'id': source['id'], 'title': translation['title'], 'summary': translation['listingDescription'],
         'publishedAt': edition['publishedAt'], 'sourceName': edition['sourceName'], 'sourceUrl': edition['sourceUrl'],
         'language': 'English', 'sourceSha256': source.get('sourceSha256') or digest('\n'.join(source['lines'])),
         'sourceLineCount': len(source['lines']), 'blocks': translation['blocks'], 'coverGeneration': art,
-        'revision': renderer.REVISION, 'pageCount': len(reader.pages), 'coverStyle': 'artwork'}
+        'revision': renderer.REVISION, 'pageCount': len(reader.pages),
+        'coverStyle': 'full-page' if art['provider'] == 'native' else 'artwork'}
     CURRENT_STAGE = 'publication'
     result = upload_edition(metadata, pdf, cover)
     return {'id': source['id'], 'pages': len(reader.pages), 'status': result.get('status', 'published')}
