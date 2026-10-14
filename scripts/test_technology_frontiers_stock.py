@@ -88,6 +88,38 @@ class StockPublicationTests(unittest.TestCase):
                 art=daily.generated_art({'id':'fixture','progress':{'coverTask':task}},{'title':'Original title'},Path(directory))
             self.assertEqual(art['taskId'],'old-task');self.assertEqual(art['sha256'],task['sha256'])
 
+    def test_mismatching_cached_manifest_task_is_replaced_in_queue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);cover=root/'fixture.jpg';Image.effect_noise((1200,1800),60).convert('RGB').save(cover,format='JPEG')
+            (root/'manifest.json').write_text(json.dumps([{'id':'fixture','taskId':'stock1:servers:2:3','provider':'stock','model':'licensed-stock-v1','source':stock.stock_photo_source(CATALOG[0])}]))
+            with patch.object(stock,'load_catalog',return_value=[]),patch.object(daily,'api') as api,patch.object(daily,'request_json',side_effect=AssertionError('no image provider')):
+                art=daily.generated_art({'id':'fixture','progress':{'coverTask':{'taskId':'queued-old','provider':'APIMart'}}},{'title':'Unmatched topic'},root)
+            self.assertEqual(art['taskId'],'native1:fixture');self.assertTrue(api.call_args.args[1]['replaceCoverTask'])
+
+    def test_matching_cache_uses_authenticated_queue_provenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);cover=root/'fixture.jpg';Image.effect_noise((1200,1800),60).convert('RGB').save(cover,format='JPEG')
+            canonical=stock.stock_photo_source(CATALOG[0]);sha=hashlib.sha256(cover.read_bytes()).hexdigest()
+            prior={'taskId':'stock1:servers:2:3','provider':'stock','model':'licensed-stock-v1','source':canonical,'sha256':sha}
+            (root/'manifest.json').write_text(json.dumps([{'id':'fixture',**prior,'source':{'id':'wrong'}}]))
+            with patch.object(stock,'load_catalog',side_effect=AssertionError('cache should be reused')),patch.object(daily,'api',side_effect=AssertionError('no write')):
+                art=daily.generated_art({'id':'fixture','progress':{'coverTask':prior}},{'title':'Data center investment'},root)
+            self.assertEqual(art['source'],canonical);self.assertEqual(art['sha256'],sha)
+
+    def test_corrupt_or_out_of_bound_cache_reselects_native(self):
+        for blob in (b'broken cached image'*600,b'tiny'):
+            with self.subTest(size=len(blob)),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'fixture.jpg').write_bytes(blob)
+                with patch.object(stock,'load_catalog',return_value=[]),patch.object(daily,'api') as api,patch.object(daily,'request_json',side_effect=AssertionError('no image provider')):
+                    art=daily.generated_art({'id':'fixture','progress':{'coverTask':{'taskId':'old-task','provider':'APIMart'}}},{'title':'Unmatched topic'},root)
+                self.assertEqual(art['provider'],'native');self.assertTrue(api.call_args.args[1]['replaceCoverTask'])
+                self.assertGreater(art['bytes'],8000);self.assertLessEqual(art['bytes'],3*1024*1024)
+
+    def test_unavailable_photo_bytes_use_native_without_paid_fallback(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(stock,'load_catalog',return_value=CATALOG),            patch.object(stock,'photo_bytes',side_effect=OSError('photo unavailable')),patch.object(daily,'api'),            patch.object(daily,'request_json',side_effect=AssertionError('no image provider')):
+            art=daily.generated_art({'id':'fixture'},{'title':'Data center investment'},Path(directory))
+        self.assertEqual(art['provider'],'native');self.assertIsNone(art['source'])
+
     def test_rebuild_selects_stock_or_native_without_resubmitting_old_ai_task(self):
         with tempfile.TemporaryDirectory() as directory:
             cover=Path(directory)/'fixture.jpg';Image.effect_noise((1200,1800),60).convert('RGB').save(cover,format='JPEG')

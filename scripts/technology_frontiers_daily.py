@@ -353,17 +353,32 @@ def generated_art(source, translation, directory):
     prior_task = (source.get('progress') or {}).get('coverTask') or {}
     task = prior_task
     saved = directory / 'manifest.json'
+    cache_matches_queue = bool(prior_task.get('taskId'))
     if saved.is_file():
-        records = json.loads(saved.read_text())
-        task = next((row for row in records if row.get('id') == source['id']), task)
-    if source.get('rebuild') is not True and cover.is_file() and task.get('taskId') and task.get('provider') in ('stock', 'native', 'APIMart'):
-        with Image.open(cover) as image:
-            image.load()
-            if image.width >= 600 and image.height >= 900:
-                sha = digest(cover.read_bytes())
-                if not task.get('sha256') or task['sha256'] == sha:
-                    return {**task, 'id': source['id'], 'sha256': sha, 'bytes': cover.stat().st_size,
-                            'width': image.width, 'height': image.height}
+        try:
+            records = json.loads(saved.read_text())
+            cached = next((row for row in records if isinstance(row, dict) and row.get('id') == source['id']), None)
+            if cached:
+                if cached.get('taskId') == prior_task.get('taskId'):
+                    # The authenticated queue's canonical receipt takes precedence.
+                    task = {**cached, **prior_task}
+                else:
+                    cache_matches_queue = False
+        except (OSError, ValueError, TypeError):
+            cache_matches_queue = False
+    if (source.get('rebuild') is not True and cache_matches_queue and cover.is_file()
+        and task.get('taskId') and task.get('provider') in ('stock', 'native', 'APIMart')
+        and 8000 <= cover.stat().st_size <= 3 * 1024 * 1024):
+        try:
+            with Image.open(cover) as image:
+                image.load()
+                if 600 <= image.width <= 8000 and 900 <= image.height <= 12000:
+                    sha = digest(cover.read_bytes())
+                    if not task.get('sha256') or task['sha256'] == sha:
+                        return {**task, 'id': source['id'], 'sha256': sha, 'bytes': cover.stat().st_size,
+                                'width': image.width, 'height': image.height}
+        except (OSError, ValueError):
+            pass
     image, photo = None, None
     try:
         photo = select_stock_photo(translation['title'], load_catalog(),

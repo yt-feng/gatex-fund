@@ -251,6 +251,7 @@ def build(edition):
         'publisher': 'GateX Intelligence', 'sourceName': edition['sourceName'], 'sourceUrl': edition.get('sourceUrl', ''),
         'publishedAt': edition['publishedAt'], 'language': 'English', 'pageCount': pages,
         'coverImageUrl': '/images/technology-frontiers/' + edition['id'] + '-illustrated.jpg',
+        'coverStyle': 'full-page',
         'status': 'published', 'order': edition.get('order', 0),
         'fileName': path.name, 'objectKey': 'intelligence-content/files/' + edition['id'] + '/' + REVISION + '.pdf',
         'coverImageSource': (edition.get('coverGeneration') or {}).get('source'),
