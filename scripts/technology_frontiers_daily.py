@@ -365,7 +365,7 @@ def generated_art(source, translation, directory):
                 else:
                     cache_matches_queue = False
         except (OSError, ValueError, TypeError):
-            cache_matches_queue = False
+            pass
     if (source.get('rebuild') is not True and cache_matches_queue and cover.is_file()
         and task.get('taskId') and task.get('provider') in ('stock', 'native', 'APIMart')
         and 8000 <= cover.stat().st_size <= 3 * 1024 * 1024):
@@ -374,7 +374,7 @@ def generated_art(source, translation, directory):
                 image.load()
                 if 600 <= image.width <= 8000 and 900 <= image.height <= 12000:
                     sha = digest(cover.read_bytes())
-                    if not task.get('sha256') or task['sha256'] == sha:
+                    if task.get('sha256') == sha:
                         return {**task, 'id': source['id'], 'sha256': sha, 'bytes': cover.stat().st_size,
                                 'width': image.width, 'height': image.height}
         except (OSError, ValueError):

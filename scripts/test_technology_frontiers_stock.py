@@ -106,6 +106,13 @@ class StockPublicationTests(unittest.TestCase):
                 art=daily.generated_art({'id':'fixture','progress':{'coverTask':prior}},{'title':'Data center investment'},root)
             self.assertEqual(art['source'],canonical);self.assertEqual(art['sha256'],sha)
 
+    def test_cached_raster_requires_a_verified_receipt_fingerprint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);cover=root/'fixture.jpg';Image.effect_noise((1200,1800),60).convert('RGB').save(cover,format='JPEG')
+            with patch.object(stock,'load_catalog',return_value=[]),patch.object(daily,'api') as api,patch.object(daily,'request_json',side_effect=AssertionError('no image provider')):
+                art=daily.generated_art({'id':'fixture','progress':{'coverTask':{'taskId':'old-task','provider':'APIMart'}}},{'title':'Unmatched topic'},root)
+            self.assertEqual(art['provider'],'native');self.assertTrue(api.call_args.args[1]['replaceCoverTask'])
+
     def test_corrupt_or_out_of_bound_cache_reselects_native(self):
         for blob in (b'broken cached image'*600,b'tiny'):
             with self.subTest(size=len(blob)),tempfile.TemporaryDirectory() as directory:
