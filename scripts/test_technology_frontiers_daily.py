@@ -124,7 +124,7 @@ class DailyEditionTests(unittest.TestCase):
         self.assertIs(request.call_args.args[2]['stream'],False)
 
     def test_deepseek_translation_uses_dedicated_credential_and_json_mode(self):
-        env = {'GATEX_TRANSLATION_PROVIDER': 'deepseek', 'DEEPSEEK_API_KEY': 'deepseek-fixture',
+        env = {'GATEX_TRANSLATION_PROVIDER': 'deepseek', 'GATEX_DEEPSEEK_CREDENTIAL': 'deepseek-fixture',
                'APIMART_API_KEY': 'legacy-fixture', 'APIMART_BASE_URL': 'https://legacy.invalid'}
         with patch.dict(daily.os.environ, env, clear=True), patch.object(daily, 'request_json',
                 return_value={'choices': [{'message': {'content': '{"ok":true}'}, 'finish_reason': 'stop'}]}) as request:

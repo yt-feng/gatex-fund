@@ -50,7 +50,7 @@ jobs:
       - name: Translate, render and publish complete editions
         env:
           GATEX_TECHNOLOGY_PUBLICATION_SECRET: ${{ secrets.GATEX_TECHNOLOGY_PUBLICATION_SECRET }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GATEX_DEEPSEEK_CREDENTIAL: ${{ secrets.DEEPSEEK_API_KEY }}
           GATEX_TRANSLATION_PROVIDER: deepseek
           GATEX_TRANSLATION_MODEL: ${{ vars.GATEX_TECHNOLOGY_TRANSLATION_MODEL || 'deepseek-v4-pro' }}
           EDITION_LIMIT: ${{ inputs.limit || '5' }}

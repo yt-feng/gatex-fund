@@ -142,7 +142,7 @@ def parse_model_json(response):
 def model_call(system, payload):
     provider = os.environ.get('GATEX_TRANSLATION_PROVIDER', 'apimart').strip().lower()
     if provider == 'deepseek':
-        token = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+        token = (os.environ.get('DEEPSEEK_API_KEY') or os.environ.get('GATEX_DEEPSEEK_CREDENTIAL', '')).strip()
         base = 'https://api.deepseek.com/v1'
         model = os.environ.get('GATEX_TRANSLATION_MODEL', 'deepseek-v4-pro')
     elif provider == 'apimart':
