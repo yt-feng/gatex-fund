@@ -123,6 +123,34 @@ class DailyEditionTests(unittest.TestCase):
             self.assertEqual(daily.model_call('Return JSON',{'example':True}),{'ok':True})
         self.assertIs(request.call_args.args[2]['stream'],False)
 
+    def test_deepseek_translation_uses_dedicated_credential_and_json_mode(self):
+        env = {'GATEX_TRANSLATION_PROVIDER': 'deepseek', 'GATEX_DEEPSEEK_CREDENTIAL': 'deepseek-fixture',
+               'APIMART_API_KEY': 'legacy-fixture', 'APIMART_BASE_URL': 'https://legacy.invalid'}
+        with patch.dict(daily.os.environ, env, clear=True), patch.object(daily, 'request_json',
+                return_value={'choices': [{'message': {'content': '{"ok":true}'}, 'finish_reason': 'stop'}]}) as request:
+            self.assertEqual(daily.model_call('Return JSON', {'example': True}), {'ok': True})
+        url, token, payload = request.call_args.args
+        self.assertEqual(url, 'https://api.deepseek.com/v1/chat/completions')
+        self.assertEqual(token, 'deepseek-fixture')
+        self.assertEqual(payload['model'], 'deepseek-v4-pro')
+        self.assertEqual(payload['thinking'], {'type': 'disabled'})
+        self.assertEqual(payload['response_format'], {'type': 'json_object'})
+        self.assertFalse(payload['stream'])
+
+    def test_deepseek_missing_credential_does_not_reuse_other_provider_key(self):
+        with patch.dict(daily.os.environ, {'GATEX_TRANSLATION_PROVIDER': 'deepseek',
+                'APIMART_API_KEY': 'legacy-fixture'}, clear=True), patch.object(daily, 'request_json') as request:
+            with self.assertRaisesRegex(RuntimeError, 'Translation credential unavailable'):
+                daily.model_call('Return JSON', {})
+        request.assert_not_called()
+
+    def test_unknown_translation_provider_does_not_make_a_request(self):
+        with patch.dict(daily.os.environ, {'GATEX_TRANSLATION_PROVIDER': 'unsupported'}, clear=True), \
+                patch.object(daily, 'request_json') as request:
+            with self.assertRaisesRegex(RuntimeError, 'Unsupported translation provider'):
+                daily.model_call('Return JSON', {})
+        request.assert_not_called()
+
     def test_publisher_label_is_canonical_only_after_approved_identity_match(self):
         with patch.dict(daily.os.environ, {'GATEX_TECHNOLOGY_SOURCE_BIZ_SHA256':daily.digest('approved')}):
             source=daily.source_from_metadata({'title':'Example','source':'source-a','published_at':'2026-09-12','document_identity':{'__biz':'approved','mid':'123','idx':'1'}},'body')
