@@ -140,15 +140,26 @@ def parse_model_json(response):
     return result
 
 def model_call(system, payload):
-    token = os.environ.get('APIMART_API_KEY') or os.environ.get('GATEX_MODEL_CREDENTIAL', '')
+    provider = os.environ.get('GATEX_TRANSLATION_PROVIDER', 'apimart').strip().lower()
+    if provider == 'deepseek':
+        token = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+        base = 'https://api.deepseek.com/v1'
+        model = os.environ.get('GATEX_TRANSLATION_MODEL', 'deepseek-v4-pro')
+    elif provider == 'apimart':
+        token = os.environ.get('APIMART_API_KEY') or os.environ.get('GATEX_MODEL_CREDENTIAL', '')
+        base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
+        if not base.endswith('/v1'): base += '/v1'
+        model = MODEL
+    else:
+        raise RuntimeError('Unsupported translation provider')
     if not token: raise RuntimeError('Translation credential unavailable')
-    base = os.environ.get('APIMART_BASE_URL', 'https://api.apimart.ai').rstrip('/')
-    if not base.endswith('/v1'): base += '/v1'
-    return parse_model_json(request_json(base + '/chat/completions', token, {
-        'model': MODEL, 'stream': False, 'temperature': 0.1, 'max_tokens': 12000,
+    request = {
+        'model': model, 'stream': False, 'temperature': 0.1, 'max_tokens': 12000,
         'response_format': {'type': 'json_object'},
         'messages': [{'role': 'system', 'content': system},
-                     {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]}))
+                     {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}]}
+    if provider == 'deepseek': request['thinking'] = {'type': 'disabled'}
+    return parse_model_json(request_json(base + '/chat/completions', token, request))
 
 def validate_blocks(blocks, total, start=1, source_lines=None):
     if not isinstance(blocks, list): raise ValueError('Invalid translated blocks')
