@@ -29,8 +29,12 @@ already fetched can be saved as a partial batch. The encrypted checkpoint
 advances only for articles whose identity, content, and assets are complete;
 deferred candidates stay eligible for a later run. After the batch and
 checkpoint are committed, the workflow reports a `partial` outcome with a
-warning and deferred count. Verification blocks with no completed new items,
-and other collection or persistence failures, still fail explicitly.
+warning and deferred count. A typed verification block during discovery is
+retried twice, after 30 and 90 seconds, from the original checkpoint and a fresh
+batch directory. This does not retry detail or asset failures, or republish a
+completed batch. Verification blocks that exhaust these attempts with no
+completed new items, and other collection or persistence failures, still fail
+explicitly. Failed attempt files remain inside the private diagnostic area.
 The primary and secondary archive profiles share one generic provider release.
 When upgrading it, update both `sealed/provider-overlay.py.age` and
 `sealed/archive-sources/source-b/provider-overlay.py.age` with the same verified

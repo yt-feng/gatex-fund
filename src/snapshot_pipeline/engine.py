@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, TextIO
@@ -17,6 +18,7 @@ from .io import atomic_write_json, load_json
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 _SAFE_STAGES = {"discover", "detail", "assets", "state", "run"}
 _SAFE_STATUSES = {"start", "ok", "empty", "retry", "failed"}
+_DISCOVERY_RETRY_DELAYS = (30, 90)
 
 
 def _load_overlay(path: Path) -> ModuleType:
@@ -108,17 +110,48 @@ def run_pipeline(
         os.chmod(private_output_path, 0o600)
         safe_logger = _safe_logger(sys.stdout)
         with contextlib.redirect_stdout(private_output), contextlib.redirect_stderr(private_output):
-            overlay = _load_overlay(provider_path)
-            collect = getattr(overlay, "collect", None)
-            if not callable(collect):
-                raise RuntimeError("provider overlay has no collector")
-            provider_result = collect(
-                config=config,
-                state=state,
-                token=token,
-                output=batch_dir,
-                emit=safe_logger,
-            )
+            for attempt in range(len(_DISCOVERY_RETRY_DELAYS) + 1):
+                stages: set[str] = set()
+                discovery_finished = False
+
+                def emit(*, stage: str, status: str, count: int | None = None) -> None:
+                    nonlocal discovery_finished
+                    safe_logger(stage=stage, status=status, count=count)
+                    stages.add(stage)
+                    if stage == "discover" and status in {"ok", "empty"}:
+                        discovery_finished = True
+
+                overlay = _load_overlay(provider_path)
+                collect = getattr(overlay, "collect", None)
+                if not callable(collect):
+                    raise RuntimeError("provider overlay has no collector")
+                try:
+                    provider_result = collect(
+                        config=copy.deepcopy(config),
+                        state=copy.deepcopy(original_state),
+                        token=token,
+                        output=batch_dir,
+                        emit=emit,
+                    )
+                    break
+                except Exception as error:
+                    # Discovery has not produced a publishable batch. Retry
+                    # only this typed transient block, never detail, asset,
+                    # validation, delivery, or persistence failures.
+                    if (
+                        getattr(error, "status", None) != "captcha"
+                        or "discover" not in stages
+                        or discovery_finished
+                        or stages - {"discover", "run"}
+                        or attempt >= len(_DISCOVERY_RETRY_DELAYS)
+                    ):
+                        raise
+                    # Keep failed bytes inside the sealed diagnostic area,
+                    # and give the next attempt a fresh output and state.
+                    if batch_dir.exists() or batch_dir.is_symlink():
+                        batch_dir.rename(work_dir / f"failed-attempt-{attempt + 1}")
+                    safe_logger(stage="discover", status="retry", count=attempt + 1)
+                    time.sleep(_DISCOVERY_RETRY_DELAYS[attempt])
     result = _validate_result(provider_result, batch_dir)
     atomic_write_json(state_out, result["state"])
     public_result = {
