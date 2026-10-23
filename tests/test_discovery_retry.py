@@ -194,6 +194,30 @@ def collect(*, state, output, emit, **kwargs):
                 self.assertFalse((root / "result.json").exists())
                 self.assert_private_output(root, stdout, stderr, 1)
 
+    def test_captcha_after_completed_discovery_does_not_retry(self):
+        for discovery_status in ("ok", "empty"):
+            provider = PROVIDER_PREAMBLE + f'''\
+def collect(*, state, output, emit, **kwargs):
+    record_attempt()
+    emit(stage='discover', status='start')
+    emit(stage='discover', status={discovery_status!r}, count=0)
+    state['known'].append('uncommitted')
+    emit(stage='run', status='failed')
+    raise Failure('private retry detail https://example.invalid/private-source')
+'''
+            with self.subTest(status=discovery_status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                status, stdout, stderr, sleeps = self.run_cli(root, provider)
+                self.assertEqual(status, 1)
+                self.assertEqual(sleeps, [])
+                self.assertEqual((root / "attempts.txt").read_text(), "1")
+                self.assertFalse((root / "state.next.json").exists())
+                self.assertFalse((root / "result.json").exists())
+                self.assertEqual(json.loads((root / "state.json").read_text()), ORIGINAL_STATE)
+                self.assertIn("failure_class=captcha", stderr)
+                self.assertNotIn("stage=discover status=retry", stdout)
+                self.assert_private_output(root, stdout, stderr, 1)
+
     def test_valid_partial_batch_is_not_retried(self):
         provider = PROVIDER_PREAMBLE + '''\
 def collect(*, state, output, emit, **kwargs):

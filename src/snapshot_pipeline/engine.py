@@ -112,10 +112,14 @@ def run_pipeline(
         with contextlib.redirect_stdout(private_output), contextlib.redirect_stderr(private_output):
             for attempt in range(len(_DISCOVERY_RETRY_DELAYS) + 1):
                 stages: set[str] = set()
+                discovery_finished = False
 
                 def emit(*, stage: str, status: str, count: int | None = None) -> None:
+                    nonlocal discovery_finished
                     safe_logger(stage=stage, status=status, count=count)
                     stages.add(stage)
+                    if stage == "discover" and status in {"ok", "empty"}:
+                        discovery_finished = True
 
                 overlay = _load_overlay(provider_path)
                 collect = getattr(overlay, "collect", None)
@@ -137,6 +141,7 @@ def run_pipeline(
                     if (
                         getattr(error, "status", None) != "captcha"
                         or "discover" not in stages
+                        or discovery_finished
                         or stages - {"discover", "run"}
                         or attempt >= len(_DISCOVERY_RETRY_DELAYS)
                     ):
