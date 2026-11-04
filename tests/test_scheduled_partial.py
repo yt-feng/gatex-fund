@@ -38,8 +38,13 @@ with Path(os.environ['TEST_EVENTS']).open('a') as stream:
     stream.write(command + '\\n')
 if command == 'diff':
     raise SystemExit(1)
-if command == 'push' and os.environ.get('TEST_FAIL') == 'push':
-    raise SystemExit(9)
+failure = os.environ.get('TEST_FAIL')
+if command == 'merge-base':
+    raise SystemExit(0 if failure == 'push-ack' else 1)
+if command == 'push':
+    pushes = Path(os.environ['TEST_EVENTS']).read_text().splitlines().count('push')
+    if failure in {'push', 'push-ack'} or (failure == 'push-twice' and pushes <= 2):
+        raise SystemExit(9)
 '''
 PROVIDER = '''def collect(*, state, output, **kwargs):
     output.mkdir(parents=True)
@@ -81,6 +86,8 @@ class ScheduledPartialTests(unittest.TestCase):
         binaries.mkdir()
         (binaries / "git").write_text(GIT_DOUBLE)
         (binaries / "git").chmod(0o700)
+        (binaries / "sleep").write_text("#!/bin/sh\nexit 0\n")
+        (binaries / "sleep").chmod(0o700)
         runtime = root / "runtime"
         runtime.mkdir()
         env = {
@@ -124,6 +131,27 @@ class ScheduledPartialTests(unittest.TestCase):
                 if failure == "archive":
                     self.assertFalse((root / "events.txt").exists())
                 self.assertEqual(list((root / "runtime").glob("snapshot-pipeline.*")), [])
+
+    def test_transient_push_failure_retries_the_same_sealed_batch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo, result = self.run_scheduled(root, "push-twice")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events.txt").read_text().splitlines()
+            self.assertEqual(events.count("commit"), 1)
+            self.assertEqual(events.count("push"), 3)
+            self.assertEqual(len(list((repo / "vault").rglob("*.tar.age"))), 1)
+            self.assertIn("stage=state status=ok", result.stdout)
+
+    def test_accepted_push_with_a_lost_response_is_not_repeated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _repo, result = self.run_scheduled(root, "push-ack")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events.txt").read_text().splitlines()
+            self.assertEqual(events.count("push"), 1)
+            self.assertEqual(events.count("commit"), 1)
+            self.assertNotIn("rebase", events)
 
 
 if __name__ == "__main__":
