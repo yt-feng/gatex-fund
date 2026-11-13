@@ -29,7 +29,7 @@ Configure these repository variables after the Worker endpoints are deployed:
 - `GATEX_TRANSLATION_MODEL`: optional text model, default `gpt-4o-mini`.
 
 The workflow uses the dedicated `GATEX_TECHNOLOGY_PUBLICATION_SECRET` and the
-`APIMART_API_KEY` repository secrets. The Worker keeps only the SHA-256 hash of
+`DEEPSEEK_API_KEY` repository secrets. The Worker keeps only the SHA-256 hash of
 the dedicated publication credential. Generic intake retains its existing secret
 and configuration. The local Python adapter supports the old intake credential
 as a fallback for compatibility. It does not require storage-admin credentials.
@@ -55,7 +55,11 @@ validated response helper. Invalid model-content JSON, malformed choices or bloc
 missing text and invalid headings receive up to three attempts with validation
 feedback. Block ranges are bounded to the supplied chunk before expanding
 coverage. Body translation and review then reduce the chunk size, down to one
-original source line or block. Invalid single-item output remains pending.
+original source line or block. If a model still invents line ranges for one
+source entry, translation retries with a text-only response and binds that
+complete text to the original line in code. Empty text, untranslated Chinese,
+invalid block types and nonempty text replaced with a divider remain rejected.
+Invalid single-item text or review output remains pending.
 
 Keep document identity, ordering, source ranges and publication state in code;
 ask the model only for the content it needs to edit. Validate before saving

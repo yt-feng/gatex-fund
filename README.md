@@ -75,6 +75,8 @@ in archive-only mode, and shares the same non-cancelling concurrency group as
 the primary snapshot so encrypted state updates are serialized. Its schedule
 is independently gated by the `ENABLE_SECONDARY_SNAPSHOT` repository variable;
 manual dispatch remains available from the default branch.
+It uses the independently verified `source-b-archive` TikHub profile. That
+archive profile is separate from the disabled generic source-b intake profile.
 
 The optional GateX Intelligence source adapters are documented in
 [`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).
@@ -102,9 +104,9 @@ The scheduled workflow installs a compatible client on its hosted runner. The
 URI belongs in an encrypted repository secret and must not be added to
 configuration files, command arguments, logs, or commits.
 
-The secondary browser-based workflow installs a pinned Playwright/Chromium pair
-and runs it under Xvfb. Browser state is accepted only through the encrypted
-checkpoint. The primary API workflow does not install or launch a browser.
+The primary and secondary archive workflows use their verified API profiles
+without installing or launching a browser. Legacy browser-provider state is
+accepted only through an encrypted checkpoint.
 
 ## Repository layout
 

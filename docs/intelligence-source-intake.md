@@ -19,6 +19,10 @@ this repository.
   and a candidate TikHub username is sealed, but the TikHub profile has not been
   verified. Both collection paths reject the profile until the profile API
   returns the exact username and display-name pair and `enabled` is set.
+- `source-b-archive`: independently verified for the existing archive-only
+  secondary snapshot. Profile username, publisher and article document identity
+  match that archive. It has its own sealed API configuration and does not
+  enable the generic source-b intake workflow or change its policy.
 
 ## Delivery contract
 

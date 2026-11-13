@@ -32,13 +32,9 @@ class ShellScriptTests(unittest.TestCase):
         self.assertIn('kill -TERM -- "-$egress_pid"', runner)
         self.assertIn('kill -KILL -- "-$egress_pid"', runner)
 
-    def test_browser_runtime_is_pinned_and_runs_under_xvfb(self):
-        workflows = [(ROOT / ".github/workflows/secondary-snapshot.yml").read_text(encoding="utf-8")]
+    def test_legacy_browser_provider_dependency_is_pinned(self):
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"playwright==1.62.0"', project)
-        for workflow in workflows:
-            self.assertIn("python3 -m playwright install --with-deps chromium", workflow)
-            self.assertIn("xvfb-run -a bash scripts/run_scheduled.sh", workflow)
 
     def test_primary_archive_uses_approved_api_and_missing_credentials_cannot_skip(self):
         workflow=(ROOT / '.github/workflows/scheduled-snapshot.yml').read_text()
@@ -72,6 +68,11 @@ class ShellScriptTests(unittest.TestCase):
         )
         self.assertIn("SNAPSHOT_VAULT_DIR: vault-secondary/source-b", workflow)
         self.assertIn('SNAPSHOT_INTAKE_MODE: "off"', workflow)
+        self.assertIn('SNAPSHOT_COLLECTION_METHOD: tikhub', workflow)
+        self.assertIn('SNAPSHOT_API_PROFILE: source-b-archive', workflow)
+        self.assertIn('TIKHUB_WECHAT_TOKEN: ${{ secrets.TIKHUB_WECHAT_TOKEN }}', workflow)
+        self.assertNotIn('EGRESS_PROXY_URI:', workflow)
+        self.assertNotIn('playwright install', workflow)
         self.assertNotIn("GATEX_INTELLIGENCE_INTAKE_SECRET", workflow)
 
     def test_intelligence_workflows_default_to_dry_run_and_backfill_is_manual(self):

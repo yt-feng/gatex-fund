@@ -310,6 +310,51 @@ class DailyEditionTests(unittest.TestCase):
         self.assertEqual([b['sourceLines'] for b in result['blocks']], [[1,1],[2,2]])
         self.assertEqual(model.call_args_list[3].args[1]['lines'],[{'line':1,'text':'source one'}])
 
+    def test_single_source_entry_does_not_depend_on_invented_model_line_numbers(self):
+        invalid = {'blocks': [{'type': 'paragraph', 'sourceLines': [1, 3], 'text': 'Wrong map.'}]}
+        complete = 'First complete paragraph.\n\nLast complete paragraph and reference.'
+        with patch.object(daily, 'model_call', side_effect=[invalid, invalid, invalid,
+            {'type': 'paragraph', 'text': complete, 'sourceLines': [100, 200]},
+            {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}]) as model, \
+            patch.object(daily, 'api', return_value={'ok': True}) as api, \
+            patch.object(daily, 'review_translation', side_effect=lambda source, draft: draft):
+            result = daily.translate({'id': 'sample', 'title': 'Source', 'lines': ['All original paragraphs.']})
+        expected = [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': complete}]
+        self.assertEqual(result['blocks'], expected)
+        self.assertEqual(model.call_args_list[3].args[1],
+            {'articleTitle': 'Source', 'sourceText': 'All original paragraphs.'})
+        api.assert_called_once_with('/sources/sample/progress', {'translationBlocks': expected})
+
+    def test_single_line_fallback_resumes_global_mapping_and_preserves_prior_progress(self):
+        saved = [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': 'Already translated.'}]
+        invalid = {'blocks': [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': 'Local numbering.'}]}
+        with patch.object(daily, 'model_call', side_effect=[invalid, invalid, invalid,
+            {'type': 'note', 'text': 'The complete closing material.'},
+            {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}]), \
+            patch.object(daily, 'api', return_value={'ok': True}) as api, \
+            patch.object(daily, 'review_translation', side_effect=lambda source, draft: draft):
+            result = daily.translate({'id': 'sample', 'title': 'Source', 'lines': ['first', 'closing'],
+                'progress': {'translationBlocks': saved}})
+        self.assertEqual(result['blocks'][1],
+            {'type': 'note', 'sourceLines': [2, 2], 'text': 'The complete closing material.'})
+        self.assertEqual(api.call_args.args[1]['translationBlocks'][0]['text'], 'Already translated.')
+
+    def test_single_line_text_validation_still_rejects_empty_untranslated_or_malformed_content(self):
+        for invalid in ({'type': 'paragraph', 'text': ''}, {'type': 'paragraph', 'text': '\u4e2d\u6587'},
+                {'type': 'divider', 'text': ''}, {'type': [], 'text': 'Body'}, {'type': 'paragraph', 'text': None}):
+            with self.subTest(invalid=invalid), patch.object(daily, 'model_call', return_value=invalid) as model, \
+                patch.object(daily, 'api') as api:
+                with self.assertRaises(daily.ModelValidationFailure):
+                    daily.translate_single_line('Title', ['Actual source text'], 0)
+            self.assertEqual(model.call_count, 3)
+            api.assert_not_called()
+
+    def test_single_blank_line_can_be_preserved_without_a_model_call(self):
+        with patch.object(daily, 'model_call') as model:
+            self.assertEqual(daily.translate_single_line('Title', ['source', ' '], 1),
+                [{'type': 'divider', 'sourceLines': [2, 2], 'text': ''}])
+        model.assert_not_called()
+
     def test_unreviewed_saved_translation_is_corrected_without_retranslation_or_art_changes(self):
         original=[{'type':'paragraph','sourceLines':[1,1],'text':'A persistent discount.'}]
         corrected=[{'type':'paragraph','sourceLines':[1,1],'text':'A discount for underestimated persistence.'}]
