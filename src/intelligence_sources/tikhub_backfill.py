@@ -19,7 +19,7 @@ from .contract import IntakeContractError, build_envelope, write_jsonl
 
 PROFILE_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_account_profile"
 ARTICLES_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_account_articles"
-DETAIL_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_article_detail"
+DETAIL_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_article_detail_h5"
 _ENDPOINTS = {PROFILE_ENDPOINT, ARTICLES_ENDPOINT, DETAIL_ENDPOINT}
 _API_HOSTS = {"api.tikhub.io", "api.tikhub.dev"}
 _USERNAME = re.compile(r"^gh_[A-Za-z0-9_]{3,61}$")

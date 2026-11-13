@@ -74,8 +74,8 @@ if [[ -n "${TIKHUB_WECHAT_TOKEN:-}" ]]; then
   cat "$work_dir/tikhub.jsonl" >> "$work_dir/sources.jsonl"
 else
   if [[ "$seed_pending" != "1" && "$rebuild_covers" != "1" ]]; then
-    echo "stage=technology-backfill status=skipped reason=tikhub-credential-unavailable"
-    exit 0
+    echo "stage=technology-backfill status=failed reason=tikhub-credential-unavailable" >&2
+    exit 1
   fi
   cp "$work_dir/state.json" "$work_dir/state.next.json"
 fi

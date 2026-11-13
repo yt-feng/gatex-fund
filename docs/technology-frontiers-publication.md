@@ -71,9 +71,12 @@ production implementation; older local copies are not release sources.
 
 The historical backfill additionally requires the existing sealed runtime
 identity and a `TIKHUB_WECHAT_TOKEN` repository secret authorized for the
-verified source-a profile, article-list, and article-detail endpoints. Without
-that secret the historical workflow remains fail-closed; new scheduled snapshots
-and already queued editions continue to use their own credentials.
+verified source-a profile, article-list, and H5 article-detail endpoints. The
+primary archive uses this same approved API profile to check the latest page
+on every scheduled run while preserving its archive checkpoint and images.
+Historical pagination remains independent. Missing API credentials fail the
+primary collector and non-seed backfill explicitly; previously queued editions
+can still be published with their separate publication credential.
 
 The PDF uses native typography, the full translated body, one editorial/source
 note inside the body and a detailed standalone final disclaimer page. Stock cover backgrounds remain text-free so the website can render accessible, responsive native titles. Native fallback covers are rendered from the original PDF title page and marked `full-page`. The public catalogue is `https://gatex.fund/images/stock/catalog.json`; no image supplier key is required.
