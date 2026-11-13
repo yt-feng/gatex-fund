@@ -4,9 +4,12 @@ import tempfile
 import unittest
 import os
 import subprocess
+import contextlib
+import io
 from pathlib import Path
 
 from snapshot_pipeline.configuration import RuntimeConfigurationError, configure_tikhub_runtime
+from snapshot_pipeline.cli import main
 
 
 CONFIG = {"token_env":"SNAPSHOT_EGRESS_PROXY", "provider":{
@@ -17,6 +20,19 @@ PROFILE = {"provider":{"expected_biz":"synthetic-biz"}, "intelligence_intake":{
 
 
 class APIConfigurationTests(unittest.TestCase):
+    def test_configuration_failure_diagnostics_stay_in_private_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'config.json').write_text(json.dumps(CONFIG))
+            (root/'profile.json').write_text('{}')
+            stderr=io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status=main(['configure-api','--config',str(root/'config.json'),
+                    '--profile',str(root/'profile.json')])
+            self.assertEqual(status,1)
+            self.assertIn('failure_class=config',stderr.getvalue())
+            self.assertTrue((root/'private-error.json').is_file())
+
     def test_missing_api_credential_fails_before_collection_and_cleans_working_files(self):
         script=Path(__file__).resolve().parents[1]/'scripts/run_scheduled.sh'
         with tempfile.TemporaryDirectory() as directory:

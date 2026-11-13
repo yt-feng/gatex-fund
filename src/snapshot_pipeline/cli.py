@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "guard":
             return guard_public_tree(args.root, args.config)
     except BaseException as error:
-        work = getattr(args, "work", Path.cwd())
+        work = args.config.parent if args.command == "configure-api" else getattr(args, "work", Path.cwd())
         error_id = private_failure(work, error)
         failure_class = _public_failure_class(error)
         print(
