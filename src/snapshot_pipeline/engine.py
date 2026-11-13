@@ -100,6 +100,9 @@ def _validate_result(result: Any, batch_dir: Path) -> dict[str, Any]:
         raise RuntimeError("provider returned an invalid deferred count")
     if deferred_count and not new_count:
         raise RuntimeError("provider deferred collection without completed new items")
+    failure_class = result.get("failure_class", "captcha")
+    if deferred_count and (not isinstance(failure_class, str) or failure_class not in {"captcha", "upstream"}):
+        raise RuntimeError("provider returned an invalid deferred failure class")
     if new_count and not batch_dir.is_dir():
         raise RuntimeError("provider did not materialize the batch")
     return {
@@ -107,6 +110,7 @@ def _validate_result(result: Any, batch_dir: Path) -> dict[str, Any]:
         "new_count": new_count,
         "discovered_count": discovered_count,
         "deferred_count": deferred_count,
+        "failure_class": failure_class if deferred_count else "",
     }
 
 
@@ -198,10 +202,10 @@ def run_pipeline(
         "batch_path": str(batch_dir) if result["new_count"] else "",
     }
     if result["deferred_count"]:
-        public_result["failure_class"] = "captcha"
+        public_result["failure_class"] = result["failure_class"]
     atomic_write_json(result_path, public_result)
     deferred_log = (
-        f" deferred_count={result['deferred_count']} failure_class=captcha"
+        f" deferred_count={result['deferred_count']} failure_class={result['failure_class']}"
         if result["deferred_count"] else ""
     )
     print(

@@ -37,6 +37,10 @@ class TikHubHTTPError(BackfillError):
         super().__init__(f"TikHub returned HTTP {status}")
 
 
+class TikHubTransportError(BackfillError):
+    status = "network"
+
+
 class RejectTikHubRedirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file_pointer, code, message, headers, new_url):
         return None
@@ -124,7 +128,7 @@ class TikHubTransport:
         except urllib.error.HTTPError as error:
             raise TikHubHTTPError(error.code) from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise BackfillError("TikHub request failed") from error
+            raise TikHubTransportError("TikHub request failed") from error
         if status != 200:
             raise TikHubHTTPError(status)
         if len(raw) > 20_000_000:
@@ -302,11 +306,11 @@ def fetch_detail(
     body = {"url": candidate.source_url, "raw": True}
     try:
         return transport.post(DETAIL_ENDPOINT, body)
-    except TikHubHTTPError as error:
+    except (TikHubHTTPError, TikHubTransportError) as error:
         # Both official endpoints return the same content envelope. The H5
         # endpoint can reject an individual article while the native one
         # returns its complete body. Keep identity/content checks in callers.
-        if error.http_status not in {400, 404, 408, 429, 500, 502, 503, 504}:
+        if isinstance(error, TikHubHTTPError) and error.http_status not in {400, 404, 408, 429, 500, 502, 503, 504}:
             raise
         return transport.post(FALLBACK_DETAIL_ENDPOINT, body)
 

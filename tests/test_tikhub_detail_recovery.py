@@ -50,6 +50,20 @@ class ArticleDetailRecoveryTests(unittest.TestCase):
                 self.assertEqual(raised.exception.http_status, status)
                 self.assertEqual(transport.calls, 1)
 
+    def test_connection_and_read_timeouts_use_native_fallback(self):
+        for failure in (TimeoutError('read timeout'), urllib.error.URLError('connection failed')):
+            calls = []
+            def opener(request, timeout):
+                calls.append(request.full_url)
+                if len(calls) == 1:
+                    raise failure
+                return SimpleNamespace(status=200, read=lambda maximum: b'{"code":200,"data":{"content":{}}}')
+            with self.subTest(failure=type(failure).__name__):
+                transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener)
+                self.assertEqual(fetch_detail(transport, self.candidate)['code'], 200)
+                self.assertEqual(calls[-1], 'https://api.tikhub.io' + FALLBACK_DETAIL_ENDPOINT)
+                self.assertEqual(transport.calls, 2)
+
     def test_second_failure_propagates_after_two_requests(self):
         calls = []
         def opener(request, timeout):

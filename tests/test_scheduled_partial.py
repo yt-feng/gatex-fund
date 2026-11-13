@@ -132,6 +132,18 @@ class ScheduledPartialTests(unittest.TestCase):
                     self.assertFalse((root / "events.txt").exists())
                 self.assertEqual(list((root / "runtime").glob("snapshot-pipeline.*")), [])
 
+    def test_api_partial_is_archived_and_pushed_before_its_upstream_warning(self):
+        provider = PROVIDER.replace("'deferred_count': 1", "'deferred_count': 1, 'failure_class': 'upstream'")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo, result = self.run_scheduled(root, provider=provider)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(len(list((repo / 'vault').rglob('*.tar.age'))), 1)
+            self.assertEqual(json.loads((repo / 'sealed/checkpoint.json.age').read_bytes().removeprefix(HEADER))['known'], ['complete-a'])
+            self.assertLess(result.stdout.index('stage=state status=ok'), result.stdout.index('::warning::'))
+            self.assertIn('deferred (upstream API)', (root / 'summary.txt').read_text())
+            self.assertNotIn('captcha', result.stdout)
+
     def test_transient_push_failure_retries_the_same_sealed_batch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
