@@ -18,6 +18,7 @@ _PUBLIC_FAILURE_CLASSES = {
     "locked",
     "network",
     "parse",
+    "timeout",
 }
 
 

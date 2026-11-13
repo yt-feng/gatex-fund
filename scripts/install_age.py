@@ -3,16 +3,21 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
 import os
 import platform
 import stat
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 
 VERSION = "1.3.1"
+DOWNLOAD_RETRY_DELAYS = (5, 15)
+RETRYABLE_HTTP_STATUSES = {408, 429, 500, 502, 503, 504}
 RELEASES = {
     ("Linux", "x86_64"): (
         "https://github.com/FiloSottile/age/releases/download/v1.3.1/age-v1.3.1-linux-amd64.tar.gz",
@@ -25,14 +30,31 @@ RELEASES = {
 }
 
 
+def download(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": "snapshot-pipeline-installer/1"})
+    for attempt in range(len(DOWNLOAD_RETRY_DELAYS) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read(20 * 1024 * 1024)
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code not in RETRYABLE_HTTP_STATUSES:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead):
+            pass
+        if attempt == len(DOWNLOAD_RETRY_DELAYS):
+            raise SystemExit("tool download failed after bounded retries")
+        print(f"stage=tool status=retry count={attempt + 1}", flush=True)
+        time.sleep(DOWNLOAD_RETRY_DELAYS[attempt])
+    raise AssertionError("download retry loop did not return")
+
+
 def install(bin_dir: Path) -> None:
     key = (platform.system(), platform.machine())
     if key not in RELEASES:
         raise SystemExit("unsupported platform")
     url, expected = RELEASES[key]
-    request = urllib.request.Request(url, headers={"User-Agent": "snapshot-pipeline-installer/1"})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        payload = response.read(20 * 1024 * 1024)
+    payload = download(url)
     if hashlib.sha256(payload).hexdigest() != expected:
         raise SystemExit("tool checksum mismatch")
     bin_dir.mkdir(parents=True, exist_ok=True)
