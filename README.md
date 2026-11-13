@@ -24,8 +24,11 @@ workflow. Its daily schedule is gated by the `ENABLE_SNAPSHOT` repository
 variable and remains disabled when that variable is absent. A separate CI
 workflow performs synthetic offline tests on every source change.
 
-When a later discovery candidate requires verification, complete articles
-already fetched can be saved as a partial batch. The encrypted checkpoint
+When a discovery candidate requires verification, it is deferred while later
+candidates are checked for attributable articles. Known anchors after that
+block cannot hide later candidates. Discovery stops once the configured number
+of new attributable documents is available, and complete articles can be saved
+as a partial batch. The encrypted checkpoint
 advances only for articles whose identity, content, and assets are complete;
 deferred candidates stay eligible for a later run. After the batch and
 checkpoint are committed, the workflow reports a `partial` outcome with a
@@ -47,6 +50,12 @@ When upgrading it, update both `sealed/provider-overlay.py.age` and
 encrypted provider. Keep their configurations and checkpoints separate. CI
 checks that these two provider files match; separate intelligence adapters are
 outside this contract.
+Browser recovery rejects error and verification pages before requesting their
+response bodies, and skips redirect and verification response bodies entirely.
+After a verification failure, remaining discovery candidates use normal requests
+without repeating browser recovery during that pass. The encrypted regression
+suite is `sealed/provider-recovery-tests.py.age`; decrypt it beside the provider
+in a private working directory before running it with Python.
 Resuming a partial batch bypasses the known-article early stop. Discovered
 articles beyond the per-run limit retain stable pending identities until
 completed, even when temporarily absent from a later discovery page.
