@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -242,6 +243,87 @@ def collect(*, state, output, emit, **kwargs):
             self.assertEqual(json.loads((root / "state.next.json").read_text())["known"], ["anchor", "complete"])
             self.assertNotIn("stage=discover status=retry", stdout)
             self.assert_private_output(root, stdout, stderr, 1)
+
+    def test_stalled_discovery_retries_then_fails_without_advancing_checkpoint(self):
+        provider = PROVIDER_PREAMBLE + '''\
+import threading
+def collect(*, state, output, emit, **kwargs):
+    record_attempt()
+    emit(stage='discover', status='start')
+    state['known'].append('uncommitted')
+    output.mkdir(parents=True)
+    (output / 'incomplete.txt').write_text('unfinished')
+    try:
+        threading.Event().wait(30)
+    except Exception:
+        raise AssertionError('deadline was caught as a provider error')
+'''
+        handler = signal.getsignal(signal.SIGALRM)
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch("snapshot_pipeline.engine._DISCOVERY_TIMEOUT_SECONDS", 0.03):
+            root = Path(temporary)
+            status, stdout, stderr, sleeps = self.run_cli(root, provider)
+            self.assertEqual(status, 1)
+            self.assertEqual(sleeps, [call(30), call(90)])
+            self.assertEqual((root / "attempts.txt").read_text(), "3")
+            self.assertIn("failure_class=timeout", stderr)
+            self.assertFalse((root / "state.next.json").exists())
+            self.assertFalse((root / "result.json").exists())
+            self.assertEqual(json.loads((root / "state.json").read_text()), ORIGINAL_STATE)
+            self.assertTrue((root / "work/private-error.json").is_file())
+            self.assert_private_output(root, stdout, stderr, 3)
+        self.assertEqual(signal.getsignal(signal.SIGALRM), handler)
+        self.assertEqual(signal.getitimer(signal.ITIMER_REAL), (0, 0))
+
+    def test_stalled_discovery_can_recover_from_clean_state_on_retry(self):
+        provider = PROVIDER_PREAMBLE + '''\
+import threading
+def collect(*, state, output, emit, **kwargs):
+    attempt = record_attempt()
+    emit(stage='discover', status='start')
+    assert state == {'known': ['anchor'], 'cursor': {'offset': 9, 'pending': ['pending']}}
+    assert not output.exists()
+    state['known'].append('complete' if attempt == 2 else 'unfinished')
+    output.mkdir(parents=True)
+    if attempt == 1:
+        (output / 'incomplete.txt').write_text('unfinished')
+        threading.Event().wait(30)
+    emit(stage='discover', status='ok', count=1)
+    (output / 'complete.txt').write_text('complete body')
+    return {'state': state, 'new_count': 1, 'discovered_count': 1}
+'''
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch("snapshot_pipeline.engine._DISCOVERY_TIMEOUT_SECONDS", 0.03):
+            root = Path(temporary)
+            status, stdout, stderr, sleeps = self.run_cli(root, provider)
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(sleeps, [call(30)])
+            self.assertEqual((root / "attempts.txt").read_text(), "2")
+            self.assertFalse((root / "work/batch/incomplete.txt").exists())
+            saved = json.loads((root / "state.next.json").read_text())
+            self.assertEqual(saved["known"], ["anchor", "complete"])
+            self.assert_private_output(root, stdout, stderr, 2)
+
+    def test_discovery_deadline_ends_at_completion_or_detail_collection(self):
+        for event in ("emit(stage='discover', status='ok', count=0)",
+                      "emit(stage='discover', status='empty', count=0)",
+                      "emit(stage='detail', status='start')"):
+            provider = PROVIDER_PREAMBLE + f'''\
+import threading
+def collect(*, state, output, emit, **kwargs):
+    record_attempt()
+    emit(stage='discover', status='start')
+    {event}
+    threading.Event().wait(0.06)
+    return {{'state': state, 'new_count': 0, 'discovered_count': 0}}
+'''
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as temporary, \
+                    patch("snapshot_pipeline.engine._DISCOVERY_TIMEOUT_SECONDS", 0.03):
+                root = Path(temporary)
+                status, stdout, stderr, sleeps = self.run_cli(root, provider)
+                self.assertEqual(status, 0, stderr)
+                self.assertEqual(sleeps, [])
+                self.assertNotIn("status=retry", stdout)
 
 
 if __name__ == "__main__":

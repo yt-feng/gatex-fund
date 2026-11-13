@@ -56,7 +56,7 @@ PROVIDER = '''def collect(*, state, output, **kwargs):
 
 
 class ScheduledPartialTests(unittest.TestCase):
-    def run_scheduled(self, root, failure=""):
+    def run_scheduled(self, root, failure="", provider=PROVIDER):
         repo = root / "repo"
         scripts = repo / "scripts"
         scripts.mkdir(parents=True)
@@ -75,7 +75,7 @@ class ScheduledPartialTests(unittest.TestCase):
         for name, body in {
             "runtime-config.json.age": '{}',
             "checkpoint.json.age": '{"known": []}',
-            "provider-overlay.py.age": PROVIDER,
+            "provider-overlay.py.age": provider,
         }.items():
             (sealed / name).write_bytes(HEADER + body.encode())
         recipients = repo / "recipients"
@@ -152,6 +152,29 @@ class ScheduledPartialTests(unittest.TestCase):
             self.assertEqual(events.count("push"), 1)
             self.assertEqual(events.count("commit"), 1)
             self.assertNotIn("rebase", events)
+
+    def test_stalled_discovery_keeps_checkpoint_and_seals_diagnostic(self):
+        provider = '''import threading
+import snapshot_pipeline.engine as engine
+engine._DISCOVERY_TIMEOUT_SECONDS = 0.03
+engine._DISCOVERY_RETRY_DELAYS = (0, 0)
+def collect(*, state, output, emit, **kwargs):
+    emit(stage='discover', status='start')
+    state['known'].append('unfinished')
+    output.mkdir(parents=True)
+    (output / 'incomplete.txt').write_text('unfinished article')
+    threading.Event().wait(30)
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo, result = self.run_scheduled(root, provider=provider)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("failure_class=timeout", result.stderr)
+            self.assertNotIn("stage=state status=ok", result.stdout)
+            self.assertEqual((repo / "sealed/checkpoint.json.age").read_bytes(), HEADER + b'{"known": []}')
+            self.assertFalse((root / "events.txt").exists())
+            self.assertTrue((root / "runtime/snapshot-diagnostic.tar.age").is_file())
+            self.assertEqual(list((root / "runtime").glob("snapshot-pipeline.*")), [])
 
 
 if __name__ == "__main__":

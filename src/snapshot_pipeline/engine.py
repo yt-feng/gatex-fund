@@ -6,6 +6,7 @@ import importlib.util
 import os
 import re
 import secrets
+import signal
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,37 @@ _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
 _SAFE_STAGES = {"discover", "detail", "assets", "state", "run"}
 _SAFE_STATUSES = {"start", "ok", "empty", "retry", "failed"}
 _DISCOVERY_RETRY_DELAYS = (30, 90)
+_DISCOVERY_TIMEOUT_SECONDS = 180
+
+
+class _DiscoveryTimeout(BaseException):
+    # Provider exception handlers must not turn the deadline into another
+    # unbounded internal retry. The runner handles it at the attempt boundary.
+    status = "timeout"
+
+
+@contextlib.contextmanager
+def _discovery_deadline():
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+
+    def expire(_signum, _frame):
+        raise _DiscoveryTimeout("source discovery exceeded its time limit")
+
+    def cancel():
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, _DISCOVERY_TIMEOUT_SECONDS)
+    try:
+        yield cancel
+    finally:
+        cancel()
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer[0]:
+            remaining = max(0.000001, previous_timer[0] - (time.monotonic() - started))
+            signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
 
 
 def _load_overlay(path: Path) -> ModuleType:
@@ -120,26 +152,29 @@ def run_pipeline(
                     stages.add(stage)
                     if stage == "discover" and status in {"ok", "empty"}:
                         discovery_finished = True
+                    if discovery_finished or stage in {"detail", "assets", "state"}:
+                        cancel_discovery_deadline()
 
                 overlay = _load_overlay(provider_path)
                 collect = getattr(overlay, "collect", None)
                 if not callable(collect):
                     raise RuntimeError("provider overlay has no collector")
                 try:
-                    provider_result = collect(
-                        config=copy.deepcopy(config),
-                        state=copy.deepcopy(original_state),
-                        token=token,
-                        output=batch_dir,
-                        emit=emit,
-                    )
+                    with _discovery_deadline() as cancel_discovery_deadline:
+                        provider_result = collect(
+                            config=copy.deepcopy(config),
+                            state=copy.deepcopy(original_state),
+                            token=token,
+                            output=batch_dir,
+                            emit=emit,
+                        )
                     break
-                except Exception as error:
+                except (Exception, _DiscoveryTimeout) as error:
                     # Discovery has not produced a publishable batch. Retry
                     # only this typed transient block, never detail, asset,
                     # validation, delivery, or persistence failures.
                     if (
-                        getattr(error, "status", None) != "captcha"
+                        (getattr(error, "status", None) != "captcha" and not isinstance(error, _DiscoveryTimeout))
                         or "discover" not in stages
                         or discovery_finished
                         or stages - {"discover", "run"}

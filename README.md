@@ -35,6 +35,12 @@ batch directory. This does not retry detail or asset failures, or republish a
 completed batch. Verification blocks that exhaust these attempts with no
 completed new items, and other collection or persistence failures, still fail
 explicitly. Failed attempt files remain inside the private diagnostic area.
+Each discovery attempt has a three-minute deadline and uses the same bounded
+retries when it stalls. The deadline ends when discovery completes or detail
+collection begins. Exhausted deadlines fail with a `timeout` status, preserving
+the original checkpoint and leaving time to seal diagnostics before job expiry.
+Tool downloads retry transient HTTP and transport failures twice, after five
+and fifteen seconds; every successful download still requires its pinned hash.
 The primary and secondary archive profiles share one generic provider release.
 When upgrading it, update both `sealed/provider-overlay.py.age` and
 `sealed/archive-sources/source-b/provider-overlay.py.age` with the same verified
