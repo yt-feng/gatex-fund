@@ -77,6 +77,10 @@ is independently gated by the `ENABLE_SECONDARY_SNAPSHOT` repository variable;
 manual dispatch remains available from the default branch.
 It uses the independently verified `source-b-archive` TikHub profile. That
 archive profile is separate from the disabled generic source-b intake profile.
+When the H5 detail endpoint rejects an individual article, its native counterpart
+is tried once with the identical source URL. The existing account, document,
+full-body and image checks still apply; credential and balance errors stop the
+run without a fallback request.
 
 The optional GateX Intelligence source adapters are documented in
 [`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).

@@ -20,7 +20,8 @@ from .contract import IntakeContractError, build_envelope, write_jsonl
 PROFILE_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_account_profile"
 ARTICLES_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_account_articles"
 DETAIL_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_article_detail_h5"
-_ENDPOINTS = {PROFILE_ENDPOINT, ARTICLES_ENDPOINT, DETAIL_ENDPOINT}
+FALLBACK_DETAIL_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_article_detail"
+_ENDPOINTS = {PROFILE_ENDPOINT, ARTICLES_ENDPOINT, DETAIL_ENDPOINT, FALLBACK_DETAIL_ENDPOINT}
 _API_HOSTS = {"api.tikhub.io", "api.tikhub.dev"}
 _USERNAME = re.compile(r"^gh_[A-Za-z0-9_]{3,61}$")
 _WHITESPACE = re.compile(r"\s+")
@@ -28,6 +29,12 @@ _WHITESPACE = re.compile(r"\s+")
 
 class BackfillError(RuntimeError):
     pass
+
+
+class TikHubHTTPError(BackfillError):
+    def __init__(self, status: int) -> None:
+        self.http_status = status
+        super().__init__(f"TikHub returned HTTP {status}")
 
 
 class RejectTikHubRedirects(urllib.request.HTTPRedirectHandler):
@@ -115,11 +122,11 @@ class TikHubTransport:
             status = int(status_value if status_value is not None else response.getcode())
             raw = response.read(20_000_001)
         except urllib.error.HTTPError as error:
-            raise BackfillError(f"TikHub returned HTTP {error.code}") from error
+            raise TikHubHTTPError(error.code) from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise BackfillError("TikHub request failed") from error
         if status != 200:
-            raise BackfillError(f"TikHub returned HTTP {status}")
+            raise TikHubHTTPError(status)
         if len(raw) > 20_000_000:
             raise BackfillError("TikHub response exceeded the size limit")
         try:
@@ -292,10 +299,16 @@ def fetch_detail(
     transport: TikHubTransport,
     candidate: BackfillCandidate,
 ) -> dict[str, Any]:
-    return transport.post(
-        DETAIL_ENDPOINT,
-        {"url": candidate.source_url, "raw": True},
-    )
+    body = {"url": candidate.source_url, "raw": True}
+    try:
+        return transport.post(DETAIL_ENDPOINT, body)
+    except TikHubHTTPError as error:
+        # Both official endpoints return the same content envelope. The H5
+        # endpoint can reject an individual article while the native one
+        # returns its complete body. Keep identity/content checks in callers.
+        if error.http_status not in {400, 404, 408, 429, 500, 502, 503, 504}:
+            raise
+        return transport.post(FALLBACK_DETAIL_ENDPOINT, body)
 
 
 def _state_candidates(value: Any) -> list[BackfillCandidate]:
