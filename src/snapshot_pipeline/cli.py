@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .configuration import configure_tikhub_runtime
 from .engine import private_failure, run_pipeline
 from .guard import guard_public_tree
 from .packing import deterministic_tar
@@ -47,12 +48,20 @@ def _parser() -> argparse.ArgumentParser:
     guard = subparsers.add_parser("guard")
     guard.add_argument("--root", type=Path, required=True)
     guard.add_argument("--config", type=Path)
+    configure = subparsers.add_parser("configure-api")
+    configure.add_argument("--config", type=Path, required=True)
+    configure.add_argument("--profile", type=Path, required=True)
+    configure.add_argument("--maximum-items", type=int, default=10)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "configure-api":
+            configure_tikhub_runtime(args.config, args.profile, args.maximum_items)
+            print("stage=config status=ready count=1")
+            return 0
         if args.command == "run":
             # A validated partial batch still needs the caller to seal and
             # persist its completed items; its result records deferred work.
@@ -73,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "guard":
             return guard_public_tree(args.root, args.config)
     except BaseException as error:
-        work = getattr(args, "work", Path.cwd())
+        work = args.config.parent if args.command == "configure-api" else getattr(args, "work", Path.cwd())
         error_id = private_failure(work, error)
         failure_class = _public_failure_class(error)
         print(

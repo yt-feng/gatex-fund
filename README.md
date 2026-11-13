@@ -24,6 +24,15 @@ workflow. Its daily schedule is gated by the `ENABLE_SNAPSHOT` repository
 variable and remains disabled when that variable is absent. A separate CI
 workflow performs synthetic offline tests on every source change.
 
+The primary archive uses the verified TikHub source profile. It checks the
+latest article page on every run, skips stable document identities already in
+the archive checkpoint, and preserves pending candidates and a separate scan
+cursor when the ten-article daily limit is reached. The existing archive state
+is retained during this migration. Complete API text, rich HTML, raw API detail,
+cover images and inline images are sealed in the existing export format before
+the checkpoint advances. The primary workflow requires `TIKHUB_WECHAT_TOKEN`;
+an absent credential fails explicitly instead of skipping collection.
+
 When a discovery candidate requires verification, it is deferred while later
 candidates are checked for attributable articles. Known anchors after that
 block cannot hide later candidates. Discovery stops once the configured number
@@ -93,9 +102,9 @@ The scheduled workflow installs a compatible client on its hosted runner. The
 URI belongs in an encrypted repository secret and must not be added to
 configuration files, command arguments, logs, or commits.
 
-Sealed providers may request a browser runtime for page-level verification.
-The scheduled workflow installs a pinned Playwright/Chromium pair and runs it
-under Xvfb. Browser state is accepted only through the encrypted checkpoint.
+The secondary browser-based workflow installs a pinned Playwright/Chromium pair
+and runs it under Xvfb. Browser state is accepted only through the encrypted
+checkpoint. The primary API workflow does not install or launch a browser.
 
 ## Repository layout
 

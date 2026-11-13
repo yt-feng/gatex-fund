@@ -11,6 +11,8 @@ age_bin=""
 profile_root_value="${SNAPSHOT_PROFILE_ROOT:-sealed}"
 vault_relative="${SNAPSHOT_VAULT_DIR:-vault}"
 intake_mode="${SNAPSHOT_INTAKE_MODE:-off}"
+collection_method="${SNAPSHOT_COLLECTION_METHOD:-sogou}"
+api_profile="${SNAPSHOT_API_PROFILE:-source-a}"
 intake_secret="${GATEX_INTELLIGENCE_INTAKE_SECRET-}"
 unset GATEX_INTELLIGENCE_INTAKE_SECRET
 frontier_secret="${GATEX_TECHNOLOGY_PUBLICATION_SECRET:-$intake_secret}"
@@ -80,6 +82,16 @@ cleanup() {
 trap seal_failure_diagnostic ERR
 trap cleanup EXIT
 
+if [[ "$collection_method" != "sogou" && "$collection_method" != "tikhub" ]]; then
+  echo "stage=config status=failed reason=collection-method-invalid" >&2
+  exit 1
+fi
+if [[ "$collection_method" == "tikhub" ]]; then
+  if [[ ! "$api_profile" =~ ^source-[a-z0-9-]{1,32}$ || -z "${TIKHUB_WECHAT_TOKEN:-}" ]]; then
+    echo "stage=config status=failed reason=api-profile-or-credential-unavailable" >&2
+    exit 1
+  fi
+fi
 : "${RUNTIME_AGE_IDENTITY:?runtime identity is required}"
 
 python3 "$repo_root/scripts/install_age.py" --bin-dir "$work_dir/bin"
@@ -91,6 +103,14 @@ chmod 600 "$work_dir/runtime.identity"
 "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/runtime-config.json" "$profile_root/runtime-config.json.age"
 "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/provider-overlay.py" "$profile_root/provider-overlay.py.age"
 "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/state.json" "$profile_root/checkpoint.json.age"
+if [[ "$collection_method" == "tikhub" ]]; then
+  "$age_bin" -d -i "$work_dir/runtime.identity" -o "$work_dir/api-profile.json" \
+    "$repo_root/sealed/intelligence-sources/$api_profile/runtime-config.json.age"
+  PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli configure-api \
+    --config "$work_dir/runtime-config.json" --profile "$work_dir/api-profile.json" \
+    --maximum-items "${SNAPSHOT_MAX_NEW_ITEMS:-10}"
+  unset EGRESS_PROXY_URI
+fi
 unset RUNTIME_AGE_IDENTITY
 rm -f -- "$work_dir/runtime.identity"
 
@@ -104,7 +124,7 @@ if [[ "$intake_mode" == "post" ]]; then
     --endpoint "${GATEX_INTELLIGENCE_INTAKE_URL:-}" >/dev/null
 fi
 
-if [[ -n "${EGRESS_PROXY_URI:-}" ]]; then
+if [[ "$collection_method" == "sogou" && -n "${EGRESS_PROXY_URI:-}" ]]; then
   egress_args=(
     --work-dir "$work_dir/egress"
     --address-file "$work_dir/egress.address"
@@ -158,12 +178,18 @@ PYTHONPATH="$repo_root/src" python3 -m snapshot_pipeline.cli run \
   --state-out "$work_dir/state.next.json" \
   --work "$work_dir/run" \
   --result "$work_dir/result.json"
+unset TIKHUB_WECHAT_TOKEN
 
 new_count="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["new_count"]))' "$work_dir/result.json")"
 state_changed="$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["state_changed"] else "0")' "$work_dir/result.json")"
 deferred_count="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("deferred_count", 0))' "$work_dir/result.json")"
 
 report_snapshot_outcome() {
+  if [[ "$collection_method" == "tikhub" && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    api_pending_count="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("last_run", {}).get("api_pending_count", 0)))' "$work_dir/state.next.json")"
+    printf 'Primary API collection saved %s complete article(s); %s candidate(s) remain pending for the next run.\n' \
+      "$new_count" "$api_pending_count" >> "$GITHUB_STEP_SUMMARY"
+  fi
   if [[ "$deferred_count" -gt 0 ]]; then
     echo "::warning::Snapshot saved $new_count complete items; $deferred_count candidate(s) deferred by captcha. Collection is partial and will retry from the saved checkpoint."
     echo "stage=run status=partial count=$new_count deferred_count=$deferred_count failure_class=captcha"
