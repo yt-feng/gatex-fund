@@ -183,6 +183,7 @@ unset TIKHUB_WECHAT_TOKEN
 new_count="$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["new_count"]))' "$work_dir/result.json")"
 state_changed="$(python3 -c 'import json,sys; print("1" if json.load(open(sys.argv[1]))["state_changed"] else "0")' "$work_dir/result.json")"
 deferred_count="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("deferred_count", 0))' "$work_dir/result.json")"
+deferred_failure_class="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("failure_class", "captcha"))' "$work_dir/result.json")"
 
 report_snapshot_outcome() {
   if [[ "$collection_method" == "tikhub" && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -191,6 +192,15 @@ report_snapshot_outcome() {
       "$new_count" "$api_pending_count" >> "$GITHUB_STEP_SUMMARY"
   fi
   if [[ "$deferred_count" -gt 0 ]]; then
+    if [[ "$deferred_failure_class" == "upstream" ]]; then
+      echo "::warning::Snapshot saved $new_count complete items; $deferred_count candidate(s) deferred by the upstream API. Pending candidates remain eligible for the next run."
+      echo "stage=run status=partial count=$new_count deferred_count=$deferred_count failure_class=upstream"
+      if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        printf 'Snapshot outcome: **partial**. Saved %s complete items; %s candidate(s) deferred (upstream API). Pending candidates remain eligible for the next run.\n' \
+          "$new_count" "$deferred_count" >> "$GITHUB_STEP_SUMMARY"
+      fi
+      return
+    fi
     echo "::warning::Snapshot saved $new_count complete items; $deferred_count candidate(s) deferred by captcha. Collection is partial and will retry from the saved checkpoint."
     echo "stage=run status=partial count=$new_count deferred_count=$deferred_count failure_class=captcha"
     if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

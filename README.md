@@ -81,6 +81,11 @@ When the H5 detail endpoint rejects an individual article, its native counterpar
 is tried once with the identical source URL. The existing account, document,
 full-body and image checks still apply; credential and balance errors stop the
 run without a fallback request.
+Connection and read timeouts also use that bounded fallback. When both detail
+endpoints are temporarily unavailable for an article, its candidate remains
+pending while other complete articles can be archived. Successful partial
+batches report an upstream warning only after encrypted state and archive
+persistence. A run that completes no new article still fails visibly.
 
 The optional GateX Intelligence source adapters are documented in
 [`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).

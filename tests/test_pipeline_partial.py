@@ -98,6 +98,27 @@ def collect(*, state, output, **kwargs):
                 self.assertIn("failure_class=" + public_class, stderr)
                 self.assertTrue((root / "work/private-error.json").exists())
 
+    def test_upstream_partial_has_an_allowlisted_reason_and_preserves_completed_state(self):
+        provider = '''def collect(*, state, output, **kwargs):
+    output.mkdir(parents=True)
+    state['known'].append('complete')
+    return {'state': state, 'new_count': 1, 'discovered_count': 2,
+            'deferred_count': 1, 'failure_class': 'upstream'}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            status, stdout, stderr = self.run_cli(root, provider, {'known': []})
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads((root / 'state.next.json').read_text())['known'], ['complete'])
+            self.assertEqual(json.loads((root / 'result.json').read_text())['failure_class'], 'upstream')
+            self.assertIn('failure_class=upstream', stdout)
+            self.assertNotIn('captcha', stdout)
+        with tempfile.TemporaryDirectory() as temporary:
+            for reason in ('private source URL', [], None):
+                with self.subTest(reason=reason), self.assertRaisesRegex(RuntimeError, 'failure class'):
+                    _validate_result({'state': {}, 'new_count': 1, 'discovered_count': 2,
+                        'deferred_count': 1, 'failure_class': reason}, Path(temporary))
+
     def test_downstream_consumers_ignore_deferred_directories_outside_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
