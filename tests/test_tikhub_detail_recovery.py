@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 from intelligence_sources.tikhub_backfill import (
     BackfillCandidate, BackfillError, TikHubHTTPError, TikHubTransport,
-    DETAIL_ENDPOINT, FALLBACK_DETAIL_ENDPOINT, fetch_detail,
+    DETAIL_ENDPOINT, FALLBACK_DETAIL_ENDPOINT, PROFILE_ENDPOINT, TikHubBudgetExhausted, fetch_detail,
 )
 
 
@@ -64,16 +64,16 @@ class ArticleDetailRecoveryTests(unittest.TestCase):
                 self.assertEqual(calls[-1], 'https://api.tikhub.io' + FALLBACK_DETAIL_ENDPOINT)
                 self.assertEqual(transport.calls, 2)
 
-    def test_second_failure_propagates_after_two_requests(self):
+    def test_failure_propagates_after_bounded_endpoint_retries(self):
         calls = []
         def opener(request, timeout):
             calls.append(request.full_url)
             return SimpleNamespace(status=400 if len(calls) == 1 else 503, read=lambda maximum: b'{}')
-        transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener)
+        transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener, sleeper=lambda seconds: None)
         with self.assertRaises(TikHubHTTPError) as raised:
             fetch_detail(transport, self.candidate)
         self.assertEqual(raised.exception.http_status, 503)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 4)
 
     def test_fallback_respects_existing_request_budget(self):
         def opener(request, timeout):
@@ -82,6 +82,37 @@ class ArticleDetailRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(BackfillError, 'call budget is exhausted'):
             fetch_detail(transport, self.candidate)
         self.assertEqual(transport.calls, 1)
+
+    def test_profile_retries_transient_failures_within_call_budget(self):
+        attempts, delays = [], []
+        def opener(request, timeout):
+            attempts.append(request.full_url)
+            if len(attempts) < 3: raise TimeoutError('temporary outage')
+            return SimpleNamespace(status=200, read=lambda maximum: b'{"code":200}')
+        transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener, sleeper=delays.append)
+        self.assertEqual(transport.post(PROFILE_ENDPOINT, {'username':'fixture'}), {'code':200})
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(delays, [1,3])
+
+    def test_profile_authentication_failure_is_not_retried(self):
+        def opener(request, timeout):
+            raise urllib.error.HTTPError(request.full_url, 403, 'Rejected', {}, io.BytesIO())
+        transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener,
+            sleeper=lambda seconds: self.fail('authentication must not retry'))
+        with self.assertRaises(TikHubHTTPError): transport.post(PROFILE_ENDPOINT, {})
+        self.assertEqual(transport.calls,1)
+
+    def test_time_budget_bounds_request_timeout_and_prevents_later_paid_call(self):
+        stamp, timeouts = [0], []
+        def opener(request, timeout):
+            timeouts.append(timeout)
+            stamp[0] += 10
+            raise TimeoutError('temporary outage')
+        transport = TikHubTransport('synthetic-credential-value-1234567890', opener=opener,
+            sleeper=lambda seconds: None, clock=lambda: stamp[0], maximum_seconds=10)
+        with self.assertRaises(TikHubBudgetExhausted): fetch_detail(transport,self.candidate)
+        self.assertEqual(timeouts,[10])
+        self.assertEqual(transport.calls,1)
 
 
 if __name__ == '__main__':

@@ -65,7 +65,7 @@ class DailyEditionTests(unittest.TestCase):
         with patch.object(daily,'model_call',side_effect=[{'blocks':[{'type':'paragraph','sourceLines':[2,2],'text':'Second'}]},
             {'title':'A title','listingDescription':'Description.','artDirection':'A visual'}]) as model, patch.object(daily,'api',return_value={'ok':True}) as api, patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
             result=daily.translate({'id':'sample','title':'Title','lines':['first','second'],'progress':{'translationBlocks':saved}})
-        self.assertEqual(model.call_args_list[0].args[1]['lines'],[{'line':2,'text':'second'}])
+        self.assertEqual(model.call_args_list[0].args[1]['sourceText'],'second')
         self.assertEqual(len(result['blocks']),2)
         self.assertEqual(api.call_count,1)
 
@@ -308,12 +308,12 @@ class DailyEditionTests(unittest.TestCase):
             patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
             result=daily.translate({'id':'sample','title':'Title','lines':['source one','source two']})
         self.assertEqual([b['sourceLines'] for b in result['blocks']], [[1,1],[2,2]])
-        self.assertEqual(model.call_args_list[3].args[1]['lines'],[{'line':1,'text':'source one'}])
+        self.assertEqual(model.call_args_list[3].args[1]['sourceText'],'source one')
 
     def test_single_source_entry_does_not_depend_on_invented_model_line_numbers(self):
         invalid = {'blocks': [{'type': 'paragraph', 'sourceLines': [1, 3], 'text': 'Wrong map.'}]}
         complete = 'First complete paragraph.\n\nLast complete paragraph and reference.'
-        with patch.object(daily, 'model_call', side_effect=[invalid, invalid, invalid,
+        with patch.object(daily, 'model_call', side_effect=[invalid, invalid,
             {'type': 'paragraph', 'text': complete, 'sourceLines': [100, 200]},
             {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}]) as model, \
             patch.object(daily, 'api', return_value={'ok': True}) as api, \
@@ -321,14 +321,14 @@ class DailyEditionTests(unittest.TestCase):
             result = daily.translate({'id': 'sample', 'title': 'Source', 'lines': ['All original paragraphs.']})
         expected = [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': complete}]
         self.assertEqual(result['blocks'], expected)
-        self.assertEqual(model.call_args_list[3].args[1],
+        self.assertEqual(model.call_args_list[2].args[1],
             {'articleTitle': 'Source', 'sourceText': 'All original paragraphs.'})
         api.assert_called_once_with('/sources/sample/progress', {'translationBlocks': expected})
 
     def test_single_line_fallback_resumes_global_mapping_and_preserves_prior_progress(self):
         saved = [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': 'Already translated.'}]
         invalid = {'blocks': [{'type': 'paragraph', 'sourceLines': [1, 1], 'text': 'Local numbering.'}]}
-        with patch.object(daily, 'model_call', side_effect=[invalid, invalid, invalid,
+        with patch.object(daily, 'model_call', side_effect=[invalid, invalid,
             {'type': 'note', 'text': 'The complete closing material.'},
             {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}]), \
             patch.object(daily, 'api', return_value={'ok': True}) as api, \
@@ -354,6 +354,23 @@ class DailyEditionTests(unittest.TestCase):
             self.assertEqual(daily.translate_single_line('Title', ['source', ' '], 1),
                 [{'type': 'divider', 'sourceLines': [2, 2], 'text': ''}])
         model.assert_not_called()
+
+    def test_translation_uses_fixed_entry_ids_and_code_assigns_ranges(self):
+        answer={'blocks':[{'blockId':1,'type':'paragraph','text':'First.', 'sourceLines':[99,100]},
+            {'blockId':2,'type':'paragraph','text':'Last.', 'sourceLines':[0,0]}]}
+        with patch.object(daily,'model_call',side_effect=[answer,
+            {'title':'Title','listingDescription':'Description.','artDirection':'Visual'}]) as model, \
+            patch.object(daily,'api',return_value={'ok':True}), \
+            patch.object(daily,'review_translation',side_effect=lambda source,draft:draft):
+            result=daily.translate({'id':'sample','title':'Source','lines':['first','last']})
+        self.assertEqual([block['sourceLines'] for block in result['blocks']],[[1,1],[2,2]])
+        self.assertIn('Do not return sourceLines',model.call_args_list[0].args[0])
+
+    def test_entry_id_map_rejects_duplicates_missing_and_reordered_ids(self):
+        for ids in ([1,1],[2,1],[1],[True,2]):
+            with self.subTest(ids=ids), self.assertRaisesRegex(ValueError,'source block map'):
+                daily.translation_entries({'blocks':[{'blockId':i,'type':'paragraph','text':'Complete.'} for i in ids]},
+                    ['first','last'],0,2)
 
     def test_unreviewed_saved_translation_is_corrected_without_retranslation_or_art_changes(self):
         original=[{'type':'paragraph','sourceLines':[1,1],'text':'A persistent discount.'}]
@@ -476,5 +493,25 @@ class DailyEditionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); (root/'manifest.json').write_text(json.dumps({'articles':[{'article_directory':'../escape'}]}))
             with self.assertRaises(ValueError): daily.enqueue_batch(root)
+
+class EditionServiceRecoveryTests(unittest.TestCase):
+    def test_transient_write_failure_replays_identical_idempotent_request(self):
+        payload={'documentIdentity':{'__biz':'fixture','mid':'1','idx':'1'},'preserveExisting':True}
+        with patch.dict(daily.os.environ,{'GATEX_TECHNOLOGY_PUBLICATION_SECRET':'synthetic'}), \
+             patch.object(daily,'request_json',side_effect=[TimeoutError(),daily.ServiceFailure(503,'service'),{'ok':True}]) as request, \
+             patch.object(daily.time,'sleep') as sleep:
+            self.assertEqual(daily.api('/sources',payload),{'ok':True})
+        self.assertEqual(request.call_count,3)
+        self.assertTrue(all(call.args==request.call_args_list[0].args for call in request.call_args_list))
+        self.assertEqual([call.args[0] for call in sleep.call_args_list],[1,3])
+
+    def test_authentication_and_source_conflicts_fail_without_replay(self):
+        for status in (401,403,409):
+            with self.subTest(status=status), patch.dict(daily.os.environ,{'GATEX_TECHNOLOGY_PUBLICATION_SECRET':'synthetic'}), \
+                 patch.object(daily,'request_json',side_effect=daily.ServiceFailure(status,'service')) as request, \
+                 patch.object(daily.time,'sleep') as sleep:
+                with self.assertRaises(daily.ServiceFailure):daily.api('/sources',{})
+                self.assertEqual(request.call_count,1)
+                sleep.assert_not_called()
 
 if __name__=='__main__': unittest.main()

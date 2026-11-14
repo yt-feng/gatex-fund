@@ -37,6 +37,6 @@ def configure_tikhub_runtime(config_path: Path, profile_path: Path, maximum_item
         collection_method="tikhub",
         max_new_articles_per_run=maximum_items,
         max_api_pages_per_run=2,
-        max_api_calls_per_run=40,
+        max_api_calls_per_run=maximum_items * 4 + 6,
     )
     atomic_write_json(config_path, updated)

@@ -63,6 +63,7 @@ from intelligence_sources.tikhub_backfill import (
     run_backfill_page,
     run_technology_backfill_page,
     verify_profile,
+    canonical_article_url,
 )
 
 
@@ -887,7 +888,7 @@ class TikHubBackfillTests(unittest.TestCase):
                 if endpoint != DETAIL_ENDPOINT:
                     raise AssertionError(f"unexpected endpoint: {endpoint}")
                 candidate_url = body["url"]
-                candidate = next(item for item in candidates if item.source_url == candidate_url)
+                candidate = next(item for item in candidates if canonical_article_url(item.source_url) == candidate_url)
                 return {
                     "code": 200,
                     "data": {
@@ -934,8 +935,8 @@ class TikHubBackfillTests(unittest.TestCase):
             )
             first_state = json.loads((root / "state.next.json").read_text(encoding="utf-8"))
             self.assertEqual(first_count, 1)
-            self.assertEqual(first_state["offset"], "cursor-1")
-            self.assertEqual(first_state["pending_next_offset"], "cursor-2")
+            self.assertEqual(first_state["offset"], "cursor-2")
+            self.assertEqual(first_state["pending_next_offset"], "")
             self.assertEqual(len(first_state["pending"]), 1)
 
             second_count = run_backfill_page(

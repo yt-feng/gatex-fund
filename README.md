@@ -77,15 +77,17 @@ is independently gated by the `ENABLE_SECONDARY_SNAPSHOT` repository variable;
 manual dispatch remains available from the default branch.
 It uses the independently verified `source-b-archive` TikHub profile. That
 archive profile is separate from the disabled generic source-b intake profile.
-When the H5 detail endpoint rejects an individual article, its native counterpart
-is tried once with the identical source URL. The existing account, document,
-full-body and image checks still apply; credential and balance errors stop the
-run without a fallback request.
-Connection and read timeouts also use that bounded fallback. When both detail
-endpoints are temporarily unavailable for an article, its candidate remains
-pending while other complete articles can be archived. Successful partial
-batches report an upstream warning only after encrypted state and archive
-persistence. A run that completes no new article still fails visibly.
+Article navigation URLs are normalized to HTTPS with only the preserved document
+identity and optional signature. Detail requests alternate between H5 and native
+endpoints for at most four attempts within the run's call and time budgets.
+Profile and page requests allow three attempts. Credential, balance and identity
+errors stop the run. Account, document, full-body and image checks remain required.
+Temporarily unavailable articles retain durable retry metadata with exponential
+cooldown, while healthy articles and the independent scan cursor can progress.
+Partial runs report an upstream warning after encrypted state and archive
+persistence. An identity-verified upstream outage may save zero new articles and
+its retry checkpoint as an explicit partial result; an unverified empty result,
+captcha or persistence failure still fails.
 
 The optional GateX Intelligence source adapters are documented in
 [`docs/intelligence-source-intake.md`](docs/intelligence-source-intake.md).

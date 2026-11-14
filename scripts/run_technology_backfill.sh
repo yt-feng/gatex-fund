@@ -120,5 +120,19 @@ fi
 git -C "$repo_root" config user.name "snapshot-pipeline[bot]"
 git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.github.com"
 git -C "$repo_root" commit -m "snapshot: update Technology Frontiers backfill cursor" -- "$state_relative"
-git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"
+source "$repo_root/scripts/push_sealed_state.sh"
+push_sealed_state "$repo_root" "${GITHUB_REF_NAME:-main}"
 echo "stage=technology-backfill-state status=ok count=$prepared_count"
+
+read -r deferred_count pending_count < <(python3 - "$work_dir/state.next.json" <<'METRICS'
+import json,sys
+state=json.load(open(sys.argv[1]))
+print(int(state.get('last_run',{}).get('deferred_count',0)),len(state.get('pending',[])))
+METRICS
+)
+if [[ "$deferred_count" -gt 0 ]]; then
+  echo "::warning::Historical collection is partial: $deferred_count article(s) await upstream retry. Durable deliveries and cursor are saved."
+fi
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  printf 'Historical delivery accepted %s source observation(s); %s candidate(s) remain pending, including %s upstream retry item(s).\n' "$prepared_count" "$pending_count" "$deferred_count" >> "$GITHUB_STEP_SUMMARY"
+fi

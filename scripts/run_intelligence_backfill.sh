@@ -88,5 +88,6 @@ fi
 git -C "$repo_root" config user.name "snapshot-pipeline[bot]"
 git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.github.com"
 git -C "$repo_root" commit -m "snapshot: update sealed backfill cursor" -- "$checkpoint_relative"
-git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"
+source "$repo_root/scripts/push_sealed_state.sh"
+push_sealed_state "$repo_root" "${GITHUB_REF_NAME:-main}"
 echo "stage=backfill-state status=ok count=1"
