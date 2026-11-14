@@ -61,6 +61,7 @@ class ScheduledPartialTests(unittest.TestCase):
         scripts = repo / "scripts"
         scripts.mkdir(parents=True)
         shutil.copy(ROOT / "scripts/run_scheduled.sh", scripts)
+        shutil.copy(ROOT / "scripts/push_sealed_state.sh", scripts)
         shutil.copytree(ROOT / "src/snapshot_pipeline", repo / "src/snapshot_pipeline", ignore=shutil.ignore_patterns('__pycache__'))
         # This double only copies synthetic fixture bytes; it neither downloads
         # tools nor claims to test encryption. Production still uses real age.

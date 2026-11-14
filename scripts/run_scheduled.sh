@@ -271,29 +271,7 @@ fi
 git -C "$repo_root" config user.name "snapshot-pipeline[bot]"
 git -C "$repo_root" config user.email "snapshot-pipeline[bot]@users.noreply.github.com"
 git -C "$repo_root" commit -m "snapshot: update sealed ledger" -- "$checkpoint_relative" "$vault_relative"
-push_succeeded=false
-for push_attempt in 1 2 3 4 5; do
-  if git -C "$repo_root" push origin "HEAD:${GITHUB_REF_NAME:-main}"; then
-    push_succeeded=true
-    break
-  fi
-  # A server error may arrive after accepting the write. Confirm the remote
-  # before retrying, and retain the already sealed batch rather than recollecting.
-  if git -C "$repo_root" fetch origin "${GITHUB_REF_NAME:-main}"; then
-    if git -C "$repo_root" merge-base --is-ancestor HEAD FETCH_HEAD; then
-      push_succeeded=true
-      break
-    fi
-    git -C "$repo_root" rebase FETCH_HEAD
-  fi
-  if [[ "$push_attempt" -lt 5 ]]; then
-    echo "stage=state status=retry attempt=$push_attempt"
-    sleep $((5 * (2 ** (push_attempt - 1))))
-  fi
-done
-if [[ "$push_succeeded" != true ]]; then
-  echo "stage=state status=failed reason=push-exhausted" >&2
-  false  # Preserve the ERR trap's sealed diagnostic on exhausted retries.
-fi
+source "$repo_root/scripts/push_sealed_state.sh"
+push_sealed_state "$repo_root" "${GITHUB_REF_NAME:-main}"
 echo "stage=state status=ok count=$new_count"
 report_snapshot_outcome

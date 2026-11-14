@@ -98,7 +98,10 @@ the sealed TikHub profile on every page, fetches at most 50 details, preserves a
 pending list and `next_offset`, and commits the encrypted cursor only after all
 GateX POSTs succeed. Dry-run never advances the cursor. It requires a
 `TIKHUB_WECHAT_TOKEN` authorized for TikHub WeChat MP V2 profile, article list,
-and article detail endpoints.
+and article detail endpoints. Both historical collectors share stable-document
+deduplication, independent pagination and a durable retry queue. Retryable detail
+failures retain their candidates with cooldown while complete later records can
+be delivered. Delivery and encrypted state persistence remain the commit boundary.
 
 Collection and identity failures fail the Actions job with a generic stage and
 error class. Delivery failures additionally expose only a fixed category, HTTP

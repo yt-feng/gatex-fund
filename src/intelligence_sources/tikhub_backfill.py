@@ -4,17 +4,19 @@ import hashlib
 import html
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from snapshot_pipeline.io import atomic_write_json, load_json
 
 from .contract import IntakeContractError, build_envelope, write_jsonl
+from .source_text import source_lines
 
 
 PROFILE_ENDPOINT = "/api/v1/wechat_mp/v2/fetch_account_profile"
@@ -39,6 +41,35 @@ class TikHubHTTPError(BackfillError):
 
 class TikHubTransportError(BackfillError):
     status = "network"
+
+
+class TikHubBudgetExhausted(BackfillError):
+    pass
+
+
+def canonical_article_url(value: str) -> str:
+    """Keep the immutable document/signature; never forward discovery sessions."""
+    parsed = urlparse(html.unescape(value.strip()))
+    if parsed.scheme not in {"http", "https"} or parsed.hostname != "mp.weixin.qq.com" or parsed.username or parsed.password or parsed.port not in {None, 80, 443}:
+        raise BackfillError("article navigation URL is invalid")
+    if parsed.path.rstrip('/') == '/s':
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        values = {}
+        for key, item in pairs:
+            if key in {'__biz', 'mid', 'idx', 'sn'}:
+                if key in values and values[key] != item:
+                    raise BackfillError("article navigation identity is ambiguous")
+                values[key] = item
+        if not all(values.get(key) for key in ('__biz', 'mid', 'idx')) or not values['mid'].isdigit() or not values['idx'].isdigit():
+            raise BackfillError("article navigation identity is unavailable")
+        return urlunparse(('https', 'mp.weixin.qq.com', '/s', '', urlencode([(key, values[key]) for key in ('__biz', 'mid', 'idx', 'sn') if key in values]), ''))
+    if not re.fullmatch(r'/s/[A-Za-z0-9_-]+', parsed.path):
+        raise BackfillError("article navigation URL is invalid")
+    return urlunparse(('https', 'mp.weixin.qq.com', parsed.path, '', '', ''))
+
+
+def recoverable_detail_error(error: BaseException) -> bool:
+    return isinstance(error, TikHubTransportError) or isinstance(error, TikHubHTTPError) and error.http_status in {400, 404, 408, 429, 500, 502, 503, 504}
 
 
 class RejectTikHubRedirects(urllib.request.HTTPRedirectHandler):
@@ -78,6 +109,9 @@ class TikHubTransport:
         timeout: float = 60.0,
         max_calls: int = 100,
         opener: Callable[[urllib.request.Request, float], Any] | None = None,
+        sleeper: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+        maximum_seconds: float = 480,
     ) -> None:
         parsed = urlparse(base_url)
         if (
@@ -100,15 +134,30 @@ class TikHubTransport:
         self.timeout = timeout
         self.max_calls = max(1, max_calls)
         self.calls = 0
+        self.sleeper, self.clock = sleeper, clock
+        self.deadline = clock() + maximum_seconds
         self.opener = opener or (
             lambda request, timeout: _NO_REDIRECT_OPENER.open(request, timeout=timeout)
         )
 
     def post(self, endpoint: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        for attempt in range(3 if endpoint in {PROFILE_ENDPOINT, ARTICLES_ENDPOINT} else 1):
+            try:
+                return self._post_once(endpoint, body)
+            except (TikHubHTTPError, TikHubTransportError) as error:
+                if not recoverable_detail_error(error) or attempt == 2 or endpoint not in {PROFILE_ENDPOINT, ARTICLES_ENDPOINT}:
+                    raise
+                self.sleeper((1, 3)[attempt])
+        raise AssertionError("unreachable API attempt")
+
+    def _post_once(self, endpoint: str, body: Mapping[str, Any]) -> dict[str, Any]:
         if endpoint not in _ENDPOINTS:
             raise BackfillError("TikHub endpoint is not allowed")
         if self.calls >= self.max_calls:
-            raise BackfillError("TikHub call budget is exhausted")
+            raise TikHubBudgetExhausted("TikHub call budget is exhausted")
+        remaining = self.deadline - self.clock()
+        if remaining <= 0:
+            raise TikHubBudgetExhausted("TikHub time budget is exhausted")
         self.calls += 1
         request = urllib.request.Request(
             f"{self.base_url}{endpoint}",
@@ -120,15 +169,20 @@ class TikHubTransport:
                 "User-Agent": "gatex-intelligence-source-runner/1",
             },
         )
+        response = None
         try:
-            response = self.opener(request, self.timeout)
+            response = self.opener(request, min(self.timeout, remaining))
             status_value = getattr(response, "status", None)
             status = int(status_value if status_value is not None else response.getcode())
             raw = response.read(20_000_001)
         except urllib.error.HTTPError as error:
+            error.close()
             raise TikHubHTTPError(error.code) from error
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise TikHubTransportError("TikHub request failed") from error
+        finally:
+            close = getattr(response, 'close', None)
+            if callable(close): close()
         if status != 200:
             raise TikHubHTTPError(status)
         if len(raw) > 20_000_000:
@@ -303,16 +357,18 @@ def fetch_detail(
     transport: TikHubTransport,
     candidate: BackfillCandidate,
 ) -> dict[str, Any]:
-    body = {"url": candidate.source_url, "raw": True}
-    try:
-        return transport.post(DETAIL_ENDPOINT, body)
-    except (TikHubHTTPError, TikHubTransportError) as error:
-        # Both official endpoints return the same content envelope. The H5
-        # endpoint can reject an individual article while the native one
-        # returns its complete body. Keep identity/content checks in callers.
-        if isinstance(error, TikHubHTTPError) and error.http_status not in {400, 404, 408, 429, 500, 502, 503, 504}:
-            raise
-        return transport.post(FALLBACK_DETAIL_ENDPOINT, body)
+    body = {"url": canonical_article_url(candidate.source_url), "raw": True}
+    last_error = None
+    for attempt, endpoint in enumerate((DETAIL_ENDPOINT, FALLBACK_DETAIL_ENDPOINT, DETAIL_ENDPOINT, FALLBACK_DETAIL_ENDPOINT)):
+        try:
+            return transport.post(endpoint, body)
+        except (TikHubHTTPError, TikHubTransportError) as error:
+            if not recoverable_detail_error(error):
+                raise
+            last_error = error
+            if attempt < 3:
+                getattr(transport, 'sleeper', time.sleep)((0, 1, 3)[attempt])
+    raise last_error
 
 
 def _state_candidates(value: Any) -> list[BackfillCandidate]:
@@ -333,6 +389,84 @@ def _state_candidates(value: Any) -> list[BackfillCandidate]:
             )
         )
     return result
+
+
+def candidate_key(candidate: BackfillCandidate) -> str:
+    parsed = urlparse(canonical_article_url(candidate.source_url))
+    values = dict(parse_qsl(parsed.query))
+    identity = ':'.join(values.get(key, '') for key in ('__biz', 'mid', 'idx'))
+    return hashlib.sha256((identity if all(values.get(key) for key in ('__biz','mid','idx')) else parsed.path).encode()).hexdigest()
+
+
+def retry_due(ledger: Mapping[str, Any], key: str, stamp: float) -> bool:
+    entry = ledger.get(key, {})
+    return not entry or float(entry.get('next_retry_at', 0)) <= stamp
+
+
+def record_retry(ledger: dict, key: str, error: BaseException, stamp: float) -> None:
+    attempts = int(ledger.get(key, {}).get('attempts', 0)) + 1
+    ledger[key] = {'attempts': attempts, 'last_failure_at': stamp,
+        'next_retry_at': stamp + min(300 * 2 ** min(attempts - 1, 7), 21600),
+        'error_type': type(error).__name__, 'http_status': getattr(error, 'http_status', None)}
+
+
+def detail_budget_available(transport: Any, reserve: int = 4) -> bool:
+    return (getattr(transport, 'calls', 0) + reserve <= getattr(transport, 'max_calls', 10000)
+        and getattr(transport, 'clock', time.monotonic)() + 1 < getattr(transport, 'deadline', float('inf')))
+
+
+def _prepare_backfill_page(state, active, username, limit, state_out, output_path, transform, status):
+    # Page scanning and retry work are independent. One unavailable article
+    # cannot pin the historical cursor to the same page indefinitely.
+    pending = _state_candidates(state.get('pending'))
+    offset = str(state.get('pending_next_offset') or state.get('offset') or '')
+    legacy_page = bool(pending and (state.get('pending_next_offset') or state.get('pending_is_end')))
+    ended = bool(state.get('pending_is_end')) if legacy_page else bool(state.get('is_end'))
+    seen_raw, documents_raw = state.get('seen') or [], state.get('seen_documents') or []
+    if not all(isinstance(value, list) and all(isinstance(item, str) for item in value) for value in (seen_raw, documents_raw)):
+        raise BackfillError('backfill seen state is invalid')
+    seen, documents = set(seen_raw), set(documents_raw)
+    retries = dict(state.get('retry_state') or {})
+    stamp = datetime.now(timezone.utc).timestamp()
+    due = [item for item in pending if item.identity_hash not in seen and candidate_key(item) not in documents and retry_due(retries, candidate_key(item), stamp)]
+    if not ended and len(due) < limit:
+        page, offset, ended = fetch_page(active, username=username, offset=offset, page_size=min(limit,20))
+        # Prefer fresh discovery URLs for the same document over saved sessions.
+        queue = {candidate_key(item):item for item in pending}
+        queue.update({candidate_key(item):item for item in page})
+        pending = list(queue.values())
+    records, failed = [], 0
+    for candidate in pending:
+        key = candidate_key(candidate)
+        if candidate.identity_hash in seen or key in documents or not retry_due(retries,key,stamp):
+            continue
+        if len(records) >= limit or not detail_budget_available(active):
+            break
+        try:
+            payload = fetch_detail(active, candidate)
+        except TikHubBudgetExhausted:
+            break
+        except (TikHubHTTPError, TikHubTransportError) as error:
+            if not recoverable_detail_error(error): raise
+            record_retry(retries,key,error,stamp); failed += 1
+            continue
+        records.append(transform(candidate,payload))
+        seen.add(candidate.identity_hash); documents.add(key); retries.pop(key,None)
+    remaining = [item for item in pending if item.identity_hash not in seen and candidate_key(item) not in documents]
+    output_path.parent.mkdir(parents=True,exist_ok=True)
+    with output_path.open('w',encoding='utf-8') as handle:
+        for record in records:
+            handle.write(json.dumps(record,ensure_ascii=False,separators=(',',':'))+'\n')
+    next_state = dict(state)
+    deferred = sum(candidate_key(item) in retries for item in remaining)
+    next_state.update(version=1, offset=offset, is_end=ended,
+        pending=[item.as_dict() for item in remaining], pending_next_offset='',pending_is_end=False,
+        seen=sorted(seen), seen_documents=sorted(documents),retry_state=retries,
+        last_run={'status': 'partial' if deferred else status, 'prepared_count':len(records),
+            'deferred_count':deferred,'attempted_failures':failed,'pending_count':len(remaining),
+            'at':datetime.now(timezone.utc).isoformat().replace('+00:00','Z')})
+    atomic_write_json(state_out,next_state)
+    return len(records)
 
 
 def run_backfill_page(
@@ -360,59 +494,12 @@ def run_backfill_page(
     if not isinstance(state, dict):
         raise BackfillError("backfill state is invalid")
     limit = max(1, min(int(maximum_items), 50))
-    active = transport or TikHubTransport(token, base_url=base_url, max_calls=limit + 3)
+    active = transport or TikHubTransport(token, base_url=base_url, max_calls=limit * 4 + 6)
     verify_profile(active, username, expected_publisher)
 
-    offset = str(state.get("offset") or "")
-    is_end = bool(state.get("is_end"))
-    pending = _state_candidates(state.get("pending"))
-    next_offset = str(state.get("pending_next_offset") or offset)
-    page_is_end = bool(state.get("pending_is_end", is_end))
-    if not pending and not is_end:
-        pending, next_offset, page_is_end = fetch_page(
-            active,
-            username=username,
-            offset=offset,
-            page_size=min(limit, 20),
-        )
-    seen_raw = state.get("seen") or []
-    if not isinstance(seen_raw, list) or not all(isinstance(item, str) for item in seen_raw):
-        raise BackfillError("backfill seen state is invalid")
-    seen = set(seen_raw)
-    eligible = [item for item in pending if item.identity_hash not in seen]
-    selected = eligible[:limit]
-    envelopes = [
-        envelope_from_detail(
-            fetch_detail(active, candidate),
-            intake_config=intake,
-            username=username,
-            candidate=candidate,
-        )
-        for candidate in selected
-    ]
-    write_jsonl(output_path, envelopes)
-    processed = {item.identity_hash for item in selected}
-    seen.update(processed)
-    remaining = [item for item in pending if item.identity_hash not in seen]
-    next_state = dict(state)
-    next_state.update(
-        {
-            "version": 1,
-            "offset": next_offset if not remaining else offset,
-            "is_end": bool(page_is_end and not remaining),
-            "pending": [item.as_dict() for item in remaining],
-            "pending_next_offset": next_offset if remaining else "",
-            "pending_is_end": page_is_end if remaining else False,
-            "seen": sorted(seen),
-            "last_run": {
-                "status": "ready",
-                "prepared_count": len(envelopes),
-                "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            },
-        }
-    )
-    atomic_write_json(state_out, next_state)
-    return len(envelopes)
+    return _prepare_backfill_page(state, active, username, limit, state_out, output_path,
+        lambda candidate, payload: envelope_from_detail(payload, intake_config=intake,
+            username=username, candidate=candidate), 'ready')
 
 
 def _first_digit(value: Any, maximum: int) -> str:
@@ -461,10 +548,19 @@ def _technology_identity(
         idx = _first_digit(content.get(key), 3)
         if idx:
             break
-    idx = idx or _first_digit(query_values.get("idx"), 3) or "1"
-    if not mid or not (1 <= int(idx) <= 999):
+    idx = idx or _first_digit(query_values.get("idx"), 3)
+    if not mid or not idx or not (1 <= int(idx) <= 999):
         raise BackfillError("article document identity is unavailable")
-    return {"__biz": approved_biz, "mid": mid, "idx": idx}
+    if content.get('bizuin') and str(content['bizuin']) != approved_biz:
+        raise BackfillError('article document source identity changed')
+    expected={'__biz':approved_biz,'mid':mid,'idx':idx}
+    for raw in urls:
+        parsed=urlparse(raw)
+        if parsed.hostname != 'mp.weixin.qq.com': continue
+        query=dict(parse_qsl(parsed.query))
+        if any(query.get(key) and query[key] != expected[key] for key in expected):
+            raise BackfillError('article navigation identity changed')
+    return expected
 
 
 def _technology_source_from_detail(
@@ -489,7 +585,7 @@ def _technology_source_from_detail(
     if not isinstance(article_text, str) or not article_text.strip():
         raise BackfillError("article content is invalid")
     article_text = article_text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
-    lines = article_text.split("\n")
+    lines = source_lines(article_text, str(content.get('content_noencode') or ''))
     # TikHub often terminates article text with a newline. The source
     # contract carries meaningful article lines only, so discard trailing
     # blank lines before translation coverage is checked.
@@ -519,7 +615,7 @@ def _technology_source_from_detail(
     except ValueError as error:
         raise BackfillError("article publication time is invalid") from error
     source_url = next(
-        (str(content.get(key) or "").strip() for key in ("content_url", "url", "source_url", "link") if str(content.get(key) or "").strip()),
+        (str(content.get(key) or "").strip() for key in ("content_url", "url", "link", "source_url") if str(content.get(key) or "").strip() and urlparse(str(content[key])).hostname == "mp.weixin.qq.com"),
         candidate.source_url,
     )
     return {
@@ -563,57 +659,9 @@ def run_technology_backfill_page(
     if not isinstance(state, dict):
         raise BackfillError("backfill state is invalid")
     limit = max(1, min(int(maximum_items), 50))
-    active = transport or TikHubTransport(token, base_url=base_url, max_calls=limit + 3)
+    active = transport or TikHubTransport(token, base_url=base_url, max_calls=limit * 4 + 6)
     verify_profile(active, username, expected_publisher)
 
-    offset = str(state.get("offset") or "")
-    is_end = bool(state.get("is_end"))
-    pending = _state_candidates(state.get("pending"))
-    next_offset = str(state.get("pending_next_offset") or offset)
-    page_is_end = bool(state.get("pending_is_end", is_end))
-    if not pending and not is_end:
-        pending, next_offset, page_is_end = fetch_page(
-            active, username=username, offset=offset, page_size=min(limit, 20)
-        )
-    seen_raw = state.get("seen") or []
-    if not isinstance(seen_raw, list) or not all(isinstance(item, str) for item in seen_raw):
-        raise BackfillError("backfill seen state is invalid")
-    seen = set(seen_raw)
-    eligible = [item for item in pending if item.identity_hash not in seen]
-    selected = eligible[:limit]
-    sources = [
-        _technology_source_from_detail(
-            fetch_detail(active, candidate),
-            intake_config=intake,
-            username=username,
-            candidate=candidate,
-            approved_biz=approved_biz,
-        )
-        for candidate in selected
-    ]
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        for source in sources:
-            handle.write(json.dumps(source, ensure_ascii=False, separators=(",", ":")) + "\n")
-    processed = {item.identity_hash for item in selected}
-    seen.update(processed)
-    remaining = [item for item in pending if item.identity_hash not in seen]
-    next_state = dict(state)
-    next_state.update(
-        {
-            "version": 1,
-            "offset": next_offset if not remaining else offset,
-            "is_end": bool(page_is_end and not remaining),
-            "pending": [item.as_dict() for item in remaining],
-            "pending_next_offset": next_offset if remaining else "",
-            "pending_is_end": page_is_end if remaining else False,
-            "seen": sorted(seen),
-            "last_run": {
-                "status": "technology-ready",
-                "prepared_count": len(sources),
-                "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            },
-        }
-    )
-    atomic_write_json(state_out, next_state)
-    return len(sources)
+    return _prepare_backfill_page(state, active, username, limit, state_out, output_path,
+        lambda candidate, payload: _technology_source_from_detail(payload, intake_config=intake,
+            username=username, candidate=candidate, approved_biz=approved_biz), 'technology-ready')

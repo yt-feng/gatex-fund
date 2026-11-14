@@ -20,6 +20,16 @@ operation succeeds. The workflow runs daily at 03:30 UTC so the 04:15 UTC
 publisher can translate and render the queued page. A failed page is replayed
 with the same identity and content; no article is marked seen before the queue
 has durably accepted it. Manual `dry-run` is available for collector checks.
+Page scanning and unavailable-article retries have separate durable state. A
+failed detail does not pin pagination or hide later healthy articles. Stable
+document identities deduplicate session-link variants; failed candidates retain
+bounded retries and cooldown metadata until recovered.
+
+Authorized source submissions set `preserveExisting: true`. When the same stable
+document arrives with different line formatting, title, date or source revision,
+the service stores the complete incoming observation privately before accepting
+the replay. The original source, translation progress and published report remain
+authoritative. A storage failure prevents acknowledgement and cursor advancement.
 
 Configure these repository variables after the Worker endpoints are deployed:
 
@@ -53,11 +63,13 @@ and cover are stored and verified; replay preserves the first publication time.
 Translation, fidelity review, title creation and title review all use the same
 validated response helper. Invalid model-content JSON, malformed choices or block fields,
 missing text and invalid headings receive up to three attempts with validation
-feedback. Block ranges are bounded to the supplied chunk before expanding
-coverage. Body translation and review then reduce the chunk size, down to one
-original source line or block. If a model still invents line ranges for one
-source entry, translation retries with a text-only response and binds that
-complete text to the original line in code. Empty text, untranslated Chinese,
+feedback. Models return complete text keyed by fixed source-entry IDs; code owns
+all source ranges. Missing, duplicate or reordered IDs are rejected. Body
+translation and review reduce invalid chunks down to one original entry or block.
+A single source entry uses a text-only response immediately, and code binds that
+complete text to its preserved source range. Flat API text may use paragraph
+boundaries from rich HTML only when every non-whitespace source character matches;
+the original text supplies all wording. Empty text, untranslated Chinese,
 invalid block types and nonempty text replaced with a divider remain rejected.
 Invalid single-item text or review output remains pending.
 
@@ -67,7 +79,9 @@ progress or calling a later paid stage. Never repair malformed output by
 dropping source content, accepting a summary or marking an incomplete review
 as complete. Service and credential failures are not model-structure errors and
 must not be retried by this content-repair helper. A failed edition does not
-stop later eligible queue items from being attempted.
+stop later eligible queue items from being attempted. Idempotent GateX service
+requests retry transient transport and HTTP failures at most three times; paid
+model calls do not use this transport replay helper.
 
 Use these rules for future model-driven publishing changes and add regressions
 for each new failure class. The GitHub workflow's checked-out publisher is the

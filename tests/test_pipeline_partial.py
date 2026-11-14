@@ -119,6 +119,22 @@ def collect(*, state, output, **kwargs):
                     _validate_result({'state': {}, 'new_count': 1, 'discovered_count': 2,
                         'deferred_count': 1, 'failure_class': reason}, Path(temporary))
 
+    def test_verified_api_check_can_persist_retry_state_without_claiming_no_new(self):
+        provider = '''def collect(*, state, output, **kwargs):
+    state['pending']=['unavailable']
+    return {'state': state, 'new_count': 0, 'discovered_count': 1,
+            'deferred_count': 1, 'failure_class': 'upstream', 'upstream_verified': True}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            status,stdout,stderr=self.run_cli(root,provider,{'pending':[]})
+            self.assertEqual(status,0,stderr)
+            result=json.loads((root/'result.json').read_text())
+            self.assertEqual(result['status'],'partial')
+            self.assertEqual(result['new_count'],0)
+            self.assertEqual(json.loads((root/'state.next.json').read_text())['pending'],['unavailable'])
+            self.assertNotIn('status=ok',stdout)
+
     def test_downstream_consumers_ignore_deferred_directories_outside_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
