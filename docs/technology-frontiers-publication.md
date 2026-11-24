@@ -64,7 +64,10 @@ Translation, fidelity review, title creation and title review all use the same
 validated response helper. Invalid model-content JSON, malformed choices or block fields,
 missing text and invalid headings receive up to three attempts with validation
 feedback. Models return complete text keyed by fixed source-entry IDs; code owns
-all source ranges. Missing, duplicate or reordered IDs are rejected. Body
+all source ranges. If a body translation or fidelity review leaves Chinese text,
+the next attempt receives the rejected draft alongside the original source.
+It translates the remaining terms in context and rechecks the full response
+before saving progress. Missing, duplicate or reordered IDs are rejected. Body
 translation and review reduce invalid chunks down to one original entry or block.
 A single source entry uses a text-only response immediately, and code binds that
 complete text to its preserved source range. Flat API text may use paragraph

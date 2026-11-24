@@ -339,6 +339,45 @@ class DailyEditionTests(unittest.TestCase):
             {'type': 'note', 'sourceLines': [2, 2], 'text': 'The complete closing material.'})
         self.assertEqual(api.call_args.args[1]['translationBlocks'][0]['text'], 'Already translated.')
 
+    def test_single_line_retries_untranslated_terms_using_the_rejected_draft(self):
+        source = ['\u4e24\u652f\u56e2\u961f\u4ecd\u9700\u8981\u78e8\u5408\u3002']
+        rejected = {'type': 'paragraph', 'text': 'The two teams still need to \u78e8\u5408.'}
+        repaired = {'type': 'paragraph', 'text': 'The two teams still need to learn to work together.'}
+        with patch.object(daily, 'model_call', side_effect=[rejected, repaired]) as model:
+            blocks = daily.translate_single_line('Title', source, 0)
+
+        self.assertEqual(blocks, [{**repaired, 'sourceLines': [1, 1]}])
+        first_request = model.call_args_list[0].args[1]
+        self.assertEqual(first_request, {'articleTitle': 'Title', 'sourceText': source[0]})
+        retry_prompt, retry_request = model.call_args_list[1].args
+        self.assertEqual(retry_request, {**first_request, 'previousDraft': rejected})
+        self.assertIn('contextual English translation', retry_prompt)
+
+    def test_body_chunk_repairs_remaining_chinese_before_saving_complete_line_map(self):
+        lines = ['\u4e24\u652f\u56e2\u961f\u4ecd\u9700\u8981\u78e8\u5408\u3002', '\u4ed6\u4eec\u6bcf\u5468\u5f00\u4f1a\u3002']
+        rejected = {'blocks': [
+            {'blockId': 1, 'type': 'paragraph', 'text': 'The two teams still need to \u78e8\u5408.'},
+            {'blockId': 2, 'type': 'paragraph', 'text': 'They meet every week.'},
+        ]}
+        repaired = {'blocks': [
+            {**rejected['blocks'][0], 'text': 'The two teams still need to learn to work together.'},
+            rejected['blocks'][1],
+        ]}
+        heading = {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}
+        with patch.object(daily, 'model_call', side_effect=[rejected, repaired, heading]) as model, \
+            patch.object(daily, 'api') as api, \
+            patch.object(daily, 'review_translation', side_effect=lambda source, draft: draft):
+            result = daily.translate({'id': 'sample', 'title': 'Source', 'lines': lines})
+
+        first_request = model.call_args_list[0].args[1]
+        self.assertNotIn('previousDraft', first_request)
+        self.assertEqual(model.call_args_list[1].args[1], {**first_request, 'previousDraft': rejected})
+        self.assertEqual(result['blocks'], [
+            {'type': block['type'], 'text': block['text'], 'sourceLines': [line, line]}
+            for line, block in enumerate(repaired['blocks'], 1)
+        ])
+        api.assert_called_once_with('/sources/sample/progress', {'translationBlocks': result['blocks']})
+
     def test_single_line_text_validation_still_rejects_empty_untranslated_or_malformed_content(self):
         for invalid in ({'type': 'paragraph', 'text': ''}, {'type': 'paragraph', 'text': '\u4e2d\u6587'},
                 {'type': 'divider', 'text': ''}, {'type': [], 'text': 'Body'}, {'type': 'paragraph', 'text': None}):
