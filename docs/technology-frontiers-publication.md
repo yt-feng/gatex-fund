@@ -66,8 +66,10 @@ missing text and invalid headings receive up to three attempts with validation
 feedback. Models return complete text keyed by fixed source-entry IDs; code owns
 all source ranges. If a body translation or fidelity review leaves Chinese text,
 the next attempt receives the rejected draft alongside the original source.
-It translates the remaining terms in context and rechecks the full response
-before saving progress. Missing, duplicate or reordered IDs are rejected. Body
+If the revised draft still has embedded Chinese terms, the last attempt can ask
+for an English replacement for each occurrence with its surrounding text.
+The publisher substitutes those spans and validates the entire draft before
+saving. Missing, duplicate or reordered IDs are rejected. Body
 translation and review reduce invalid chunks down to one original entry or block.
 A single source entry uses a text-only response immediately, and code binds that
 complete text to its preserved source range. Flat API text may use paragraph
