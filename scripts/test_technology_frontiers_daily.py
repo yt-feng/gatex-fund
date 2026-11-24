@@ -378,6 +378,44 @@ class DailyEditionTests(unittest.TestCase):
         ])
         api.assert_called_once_with('/sources/sample/progress', {'translationBlocks': result['blocks']})
 
+    def test_final_body_attempt_replaces_terms_in_context_and_keeps_other_text(self):
+        term = '\u78e8\u5408'
+        source = {'id': 'sample', 'title': 'Source', 'lines': ['First line.', 'Second line.']}
+        rejected = {'blocks': [
+            {'blockId': 1, 'type': 'paragraph', 'text': 'The teams need to ' + term + '.'},
+            {'blockId': 2, 'type': 'note', 'text': 'Technical ' + term + ' took months.'},
+        ]}
+        edits = {'replacements': [
+            {'termId': 1, 'text': 'learn to work together'},
+            {'termId': 2, 'text': 'integration'},
+        ]}
+        heading = {'title': 'Title', 'listingDescription': 'Description.', 'artDirection': 'Visual'}
+        with patch.object(daily, 'model_call', side_effect=[rejected, rejected, edits, heading]) as model, \
+            patch.object(daily, 'api') as api, \
+            patch.object(daily, 'review_translation', side_effect=lambda source, draft: draft):
+            result = daily.translate(source)
+
+        self.assertEqual(model.call_args_list[2].args[1]['terms'], [
+            {'termId': 1, 'sourceTerm': term, 'before': 'The teams need to ', 'after': '.'},
+            {'termId': 2, 'sourceTerm': term, 'before': 'Technical ', 'after': ' took months.'},
+        ])
+        self.assertEqual(result['blocks'], [
+            {'type': 'paragraph', 'text': 'The teams need to learn to work together.', 'sourceLines': [1, 1]},
+            {'type': 'note', 'text': 'Technical integration took months.', 'sourceLines': [2, 2]},
+        ])
+        api.assert_called_once_with('/sources/sample/progress', {'translationBlocks': result['blocks']})
+
+    def test_term_repair_rejects_unmatched_empty_or_untranslated_replacements(self):
+        term = '\u78e8\u5408'
+        draft = {'type': 'paragraph', 'text': 'Teams need to ' + term + '.'}
+        for replacements in ([], [{'termId': 2, 'text': 'adapt'}],
+                [{'termId': True, 'text': 'adapt'}], [{'termId': 1, 'text': ' '}],
+                [{'termId': 1, 'text': term}]):
+            with self.subTest(replacements=replacements), \
+                patch.object(daily, 'model_call', return_value={'replacements': replacements}):
+                with self.assertRaisesRegex(ValueError, daily.INVALID_TERM_REPLACEMENTS):
+                    daily.repair_untranslated_terms(draft)
+
     def test_single_line_text_validation_still_rejects_empty_untranslated_or_malformed_content(self):
         for invalid in ({'type': 'paragraph', 'text': ''}, {'type': 'paragraph', 'text': '\u4e2d\u6587'},
                 {'type': 'divider', 'text': ''}, {'type': [], 'text': 'Body'}, {'type': 'paragraph', 'text': None}):
@@ -508,13 +546,15 @@ class DailyEditionTests(unittest.TestCase):
             ({'blocks':[{'blockId':2,'text':'Foreign block.'}]},'Review changed the source block map'),
             ({'blocks':[{'blockId':1,'text':None}]},'Invalid reviewed block text'),
             ({'blocks':[{'blockId':1,'text':''}]},'Translation is empty'),
-            ({'blocks':[{'blockId':1,'text':'Untranslated \u4e2d\u6587'}]},'Untranslated body text remains'),
+            ({'blocks':[{'blockId':1,'text':'Untranslated \u4e2d\u6587'}]},daily.INVALID_TERM_REPLACEMENTS),
         ]
         for response,message in cases:
             with self.subTest(message=message), patch.object(daily,'model_call',return_value=response) as model, patch.object(daily,'api') as api:
                 with self.assertRaisesRegex(ValueError,message): daily.review_translation(source,draft)
             self.assertEqual(model.call_count,3)
-            self.assertTrue(all('draftBlocks' in call.args[1] for call in model.call_args_list))
+            self.assertTrue(all('draftBlocks' in call.args[1] for call in model.call_args_list[:2]))
+            self.assertIn('terms' if message == daily.INVALID_TERM_REPLACEMENTS else 'draftBlocks',
+                model.call_args_list[2].args[1])
             api.assert_not_called()
             self.assertEqual(original[0]['text'],'Original complete translation.')
             self.assertNotIn('reviewVersion',draft)
